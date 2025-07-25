@@ -1,6 +1,6 @@
 # WebScope
 
-WebScope is a comprehensive web content discovery and analysis tool designed for security researchers and penetration testers. It discovers paths, endpoints, and content from web applications through multiple analysis techniques. WebScope focuses on content discovery from known targets and is designed to complement subdomain enumeration tools like SubScope.
+WebScope is a **static web content analysis tool** designed for security researchers and penetration testers. It performs deep analysis of known web targets through static techniques including path bruteforcing, JavaScript analysis, and historical data mining. WebScope complements active crawling tools like Katana by focusing on **static analysis** rather than dynamic crawling.
 
 ## Features
 
@@ -96,15 +96,19 @@ WebScope outputs structured JSON with discovered paths, endpoints, and metadata:
 
 ## Integration
 
-WebScope is designed to complement SubScope and integrate with other security tools for content discovery:
+WebScope is designed to complement active crawling tools and integrate with other security tools:
 
 ```bash
-# Integration with SubScope
-subscope -d example.com -o round1.json
-webscope -i round1.json -o webscope-results.json
+# Integration with SubScope (subdomain enumeration)
+subscope -d example.com -o subdomains.json
+webscope -i subdomains.json -o webscope-analysis.json
+
+# Integration with Katana (active crawling) 
+katana -u https://example.com -d 3 -js-crawl -o katana-crawl.txt
+cat katana-crawl.txt | webscope -o deep-analysis.json
 
 # Chain with other tools
-cat webscope-results.json | jq -r '.discoveries[].paths[].url' | httpx -silent
+cat webscope-analysis.json | jq -r '.discoveries[].paths[].url' | httpx -silent
 ```
 
 ## License

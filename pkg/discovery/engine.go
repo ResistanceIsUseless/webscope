@@ -85,6 +85,8 @@ func NewEngine(config *Config) *Engine {
 			engine.modules = append(engine.modules, modules.NewRobotsModule(config.Timeout))
 		case "paths":
 			engine.modules = append(engine.modules, modules.NewPathsModule(config.Timeout, true))
+		case "javascript", "js":
+			engine.modules = append(engine.modules, modules.NewJavaScriptModule(config.Timeout))
 		}
 	}
 

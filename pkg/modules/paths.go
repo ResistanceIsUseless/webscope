@@ -1,6 +1,8 @@
 package modules
 
 import (
+	"bufio"
+	"embed"
 	"io"
 	"net/http"
 	"strings"
@@ -15,12 +17,15 @@ type PathsModule struct {
 	smartMode bool
 }
 
+//go:embed wordlists/common-paths.txt
+var wordlistFS embed.FS
+
 func NewPathsModule(timeout time.Duration, smartMode bool) *PathsModule {
 	return &PathsModule{
 		client: &http.Client{
 			Timeout: timeout,
 		},
-		wordlist:  getDefaultWordlist(),
+		wordlist:  loadWordlist(),
 		smartMode: smartMode,
 	}
 }
@@ -155,64 +160,36 @@ func (p *PathsModule) deduplicateStrings(input []string) []string {
 	return result
 }
 
+func loadWordlist() []string {
+	var wordlist []string
+	
+	// Try to load from embedded wordlist
+	if data, err := wordlistFS.ReadFile("wordlists/common-paths.txt"); err == nil {
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" && !strings.HasPrefix(line, "#") {
+				wordlist = append(wordlist, line)
+			}
+		}
+	}
+	
+	// Fallback to default wordlist if file loading fails
+	if len(wordlist) == 0 {
+		wordlist = getDefaultWordlist()
+	}
+	
+	return wordlist
+}
+
 func getDefaultWordlist() []string {
 	return []string{
-		"admin",
-		"api",
-		"app",
-		"assets",
-		"backup",
-		"config",
-		"css",
-		"dashboard",
-		"data",
-		"db",
-		"debug",
-		"docs",
-		"download",
-		"files",
-		"home",
-		"images",
-		"img",
-		"js",
-		"json",
-		"login",
-		"logs",
-		"manage",
-		"media",
-		"old",
-		"panel",
-		"private",
-		"public",
-		"scripts",
-		"static",
-		"test",
-		"tmp",
-		"upload",
-		"uploads",
-		"user",
-		"users",
-		"v1",
-		"v2",
-		"web",
-		"www",
-		"xml",
-		"backup.zip",
-		"config.json",
-		"database.sql",
-		"dump.sql",
-		"settings.json",
-		"web.config",
-		"phpinfo.php",
-		"info.php",
-		"server-status",
-		"server-info",
-		".env",
-		".git",
-		".svn",
-		".htaccess",
-		".htpasswd",
-		"crossdomain.xml",
-		"clientaccesspolicy.xml",
+		"admin", "api", "app", "assets", "backup", "config", "css", "dashboard",
+		"data", "db", "debug", "docs", "download", "files", "home", "images",
+		"img", "js", "json", "login", "logs", "manage", "media", "old", "panel",
+		"private", "public", "scripts", "static", "test", "tmp", "upload",
+		"uploads", "user", "users", "v1", "v2", "web", "www", "xml",
+		"robots.txt", "sitemap.xml", "favicon.ico", ".well-known/security.txt",
+		".env", ".git", ".svn", ".htaccess", ".htpasswd", "web.config",
 	}
 }

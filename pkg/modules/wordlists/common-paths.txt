@@ -1,0 +1,206 @@
+# Common web paths for discovery
+# Admin and management
+admin
+admin/
+admin/login
+admin/index
+admin/dashboard
+admin/config
+admin/settings
+manage
+management
+manager
+panel
+control
+dashboard
+
+# API endpoints
+api
+api/
+api/v1
+api/v2
+api/v3
+api/docs
+api/swagger
+api/openapi
+graphql
+rest
+json
+xml
+
+# Common applications
+app
+apps
+application
+applications
+web
+www
+site
+sites
+
+# Configuration and settings
+config
+configuration
+settings
+setup
+install
+installer
+
+# Authentication
+login
+logout
+signin
+signout
+auth
+authenticate
+authentication
+register
+registration
+signup
+
+# Static resources
+assets
+static
+public
+resources
+css
+js
+javascript
+images
+img
+pics
+pictures
+media
+files
+uploads
+download
+downloads
+
+# Development and testing
+dev
+development
+test
+testing
+tests
+debug
+staging
+stage
+demo
+sandbox
+
+# Backup and archives
+backup
+backups
+bak
+old
+archive
+archives
+temp
+tmp
+cache
+
+# Database and data
+db
+database
+data
+sql
+mysql
+postgres
+mongodb
+redis
+
+# Logs and monitoring
+logs
+log
+logging
+monitor
+monitoring
+metrics
+stats
+statistics
+
+# Documentation
+docs
+documentation
+help
+manual
+guide
+readme
+changelog
+
+# Security
+security
+ssl
+tls
+cert
+certificate
+keys
+secrets
+
+# Common files with extensions
+robots.txt
+sitemap.xml
+favicon.ico
+crossdomain.xml
+clientaccesspolicy.xml
+.well-known/security.txt
+.htaccess
+.htpasswd
+web.config
+.env
+.git
+.svn
+package.json
+composer.json
+requirements.txt
+Dockerfile
+docker-compose.yml
+
+# Common API patterns
+health
+status
+ping
+info
+version
+metrics
+swagger.json
+openapi.json
+schema.json
+
+# Framework specific
+wp-admin
+wp-content
+wp-includes
+drupal
+joomla
+magento
+laravel
+symfony
+django
+flask
+rails
+spring
+
+# Cloud and services
+aws
+azure
+gcp
+s3
+cloudfront
+cdn
+
+# Common error pages
+404
+500
+403
+401
+error
+errors
+
+# Administrative tools
+phpmyadmin
+adminer
+phpinfo
+info.php
+server-info
+server-status

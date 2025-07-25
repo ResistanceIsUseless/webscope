@@ -23,7 +23,7 @@ func main() {
 		workers     = flag.Int("w", 20, "Number of worker threads")
 		timeout     = flag.Duration("t", 30*time.Second, "HTTP timeout")
 		rateLimit   = flag.Int("r", 20, "Requests per second")
-		modules     = flag.String("m", "http,robots,paths", "Discovery modules to use (comma-separated)")
+		modules     = flag.String("m", "http,robots,paths,javascript", "Discovery modules to use (comma-separated)")
 		verbose     = flag.Bool("v", false, "Verbose output")
 	)
 	flag.Parse()
