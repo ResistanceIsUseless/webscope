@@ -21,7 +21,6 @@ type DiscoveryModule interface {
 
 type DiscoveryResult struct {
 	Paths        []Path       `json:"paths,omitempty"`
-	Subdomains   []string     `json:"subdomains,omitempty"`
 	Endpoints    []Endpoint   `json:"endpoints,omitempty"`
 	Technologies []Technology `json:"technologies,omitempty"`
 	Secrets      []Secret     `json:"secrets,omitempty"`
@@ -81,7 +80,6 @@ type WebScopeResult struct {
 	Metadata     Metadata               `json:"metadata"`
 	Statistics   Statistics             `json:"statistics"`
 	Discoveries  map[string]*Discovery  `json:"discoveries"`
-	Subdomains   []SubdomainDiscovery   `json:"subdomains,omitempty"`
 	Technologies map[string][]Technology `json:"technologies,omitempty"`
 }
 
@@ -93,12 +91,6 @@ type Discovery struct {
 	Parameters  []Parameter `json:"parameters,omitempty"`
 	Secrets     []Secret    `json:"secrets,omitempty"`
 	Historical  []Path      `json:"historical,omitempty"`
-}
-
-type SubdomainDiscovery struct {
-	Domain    string    `json:"domain"`
-	Source    string    `json:"source"`
-	FirstSeen time.Time `json:"first_seen"`
 }
 
 type Metadata struct {

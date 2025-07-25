@@ -156,7 +156,6 @@ func (e *Engine) processTarget(ctx context.Context, target types.Target) types.E
 
 	combinedResult := &types.DiscoveryResult{
 		Paths:        []types.Path{},
-		Subdomains:   []string{},
 		Endpoints:    []types.Endpoint{},
 		Technologies: []types.Technology{},
 		Secrets:      []types.Secret{},
@@ -180,7 +179,6 @@ func (e *Engine) processTarget(ctx context.Context, target types.Target) types.E
 		}
 
 		combinedResult.Paths = append(combinedResult.Paths, moduleResult.Paths...)
-		combinedResult.Subdomains = append(combinedResult.Subdomains, moduleResult.Subdomains...)
 		combinedResult.Endpoints = append(combinedResult.Endpoints, moduleResult.Endpoints...)
 		combinedResult.Technologies = append(combinedResult.Technologies, moduleResult.Technologies...)
 		combinedResult.Secrets = append(combinedResult.Secrets, moduleResult.Secrets...)

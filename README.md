@@ -1,6 +1,6 @@
 # WebScope
 
-WebScope is a comprehensive web content discovery and analysis tool designed for security researchers and penetration testers. It discovers paths, endpoints, and subdomains from web applications through multiple analysis techniques.
+WebScope is a comprehensive web content discovery and analysis tool designed for security researchers and penetration testers. It discovers paths, endpoints, and content from web applications through multiple analysis techniques. WebScope focuses on content discovery from known targets and is designed to complement subdomain enumeration tools like SubScope.
 
 ## Features
 
@@ -96,15 +96,15 @@ WebScope outputs structured JSON with discovered paths, endpoints, and metadata:
 
 ## Integration
 
-WebScope is designed to complement SubScope and integrate with other security tools:
+WebScope is designed to complement SubScope and integrate with other security tools for content discovery:
 
 ```bash
 # Integration with SubScope
 subscope -d example.com -o round1.json
 webscope -i round1.json -o webscope-results.json
 
-# Extract discovered subdomains for next round
-cat webscope-results.json | jq -r '.subdomains[].domain' > new-domains.txt
+# Chain with other tools
+cat webscope-results.json | jq -r '.discoveries[].paths[].url' | httpx -silent
 ```
 
 ## License
