@@ -96,19 +96,21 @@ WebScope outputs structured JSON with discovered paths, endpoints, and metadata:
 
 ## Integration
 
-WebScope is designed to complement active crawling tools and integrate with other security tools:
+WebScope is designed to work with the ProjectDiscovery ecosystem and other security tools:
 
 ```bash
-# Integration with SubScope (subdomain enumeration)
-subscope -d example.com -o subdomains.json
-webscope -i subdomains.json -o webscope-analysis.json
+# Comprehensive reconnaissance pipeline
+subscope -d example.com -o subdomains.json          # Subdomain enumeration
+cat subdomains.json | gau > historical-urls.txt     # Historical URLs from archives
+cat subdomains.json | urlfinder > more-urls.txt     # Additional URL sources
+katana -u https://example.com -d 3 -js-crawl -o active-crawl.txt  # Active crawling
 
-# Integration with Katana (active crawling) 
-katana -u https://example.com -d 3 -js-crawl -o katana-crawl.txt
-cat katana-crawl.txt | webscope -o deep-analysis.json
+# Deep static analysis with WebScope
+webscope -i subdomains.json -o static-analysis.json  # Static analysis of targets
+cat historical-urls.txt | webscope -o historical-analysis.json  # Analyze historical URLs
 
-# Chain with other tools
-cat webscope-analysis.json | jq -r '.discoveries[].paths[].url' | httpx -silent
+# Chain with validation tools
+cat static-analysis.json | jq -r '.discoveries[].paths[].url' | httpx -silent
 ```
 
 ## License

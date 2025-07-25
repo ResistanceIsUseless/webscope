@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -11,8 +12,11 @@ import (
 )
 
 type HTTPModule struct {
-	client  *http.Client
-	timeout time.Duration
+	client     *http.Client
+	timeout    time.Duration
+	formRegex  *regexp.Regexp
+	inputRegex *regexp.Regexp
+	paramRegex *regexp.Regexp
 }
 
 func NewHTTPModule(timeout time.Duration) *HTTPModule {
@@ -26,7 +30,10 @@ func NewHTTPModule(timeout time.Duration) *HTTPModule {
 				return nil
 			},
 		},
-		timeout: timeout,
+		timeout:    timeout,
+		formRegex:  regexp.MustCompile(`(?i)<form[^>]*action=["']([^"']*)["'][^>]*>`),
+		inputRegex: regexp.MustCompile(`(?i)<input[^>]*name=["']([^"']+)["'][^>]*>`),
+		paramRegex: regexp.MustCompile(`[?&]([^=&]+)=`),
 	}
 }
 
@@ -43,6 +50,8 @@ func (h *HTTPModule) Discover(target types.Target) (*types.DiscoveryResult, erro
 		Paths:        []types.Path{},
 		Endpoints:    []types.Endpoint{},
 		Technologies: []types.Technology{},
+		Forms:        []types.Form{},
+		Parameters:   []types.Parameter{},
 	}
 
 	req, err := http.NewRequest("GET", target.URL, nil)
@@ -81,6 +90,14 @@ func (h *HTTPModule) Discover(target types.Target) (*types.DiscoveryResult, erro
 
 	techs := h.identifyTechnologies(resp, body)
 	result.Technologies = append(result.Technologies, techs...)
+
+	// Extract forms and parameters from HTML content
+	forms := h.extractForms(string(body), target.URL)
+	result.Forms = append(result.Forms, forms...)
+
+	// Extract parameters from URLs
+	params := h.extractParameters(target.URL)
+	result.Parameters = append(result.Parameters, params...)
 
 	commonPaths := h.discoverCommonPaths(target)
 	result.Paths = append(result.Paths, commonPaths...)
@@ -214,4 +231,102 @@ func (h *HTTPModule) discoverCommonPaths(target types.Target) []types.Path {
 	}
 
 	return paths
+}
+
+func (h *HTTPModule) extractForms(htmlContent, baseURL string) []types.Form {
+	var forms []types.Form
+	
+	// Find all form elements with more comprehensive regex
+	formRegex := regexp.MustCompile(`(?is)<form[^>]*>.*?</form>`)
+	actionRegex := regexp.MustCompile(`(?i)action=["']?([^"'\s>]+)["']?`)
+	methodRegex := regexp.MustCompile(`(?i)method=["']?([^"'\s>]+)["']?`)
+	
+	formMatches := formRegex.FindAllString(htmlContent, -1)
+	
+	for _, formHTML := range formMatches {
+		form := types.Form{
+			Action: "",
+			Method: "GET", // Default method
+			Inputs: []string{},
+			Source: "http-form",
+		}
+		
+		// Extract action
+		if actionMatch := actionRegex.FindStringSubmatch(formHTML); len(actionMatch) > 1 {
+			form.Action = actionMatch[1]
+		}
+		
+		// Extract method
+		if methodMatch := methodRegex.FindStringSubmatch(formHTML); len(methodMatch) > 1 {
+			form.Method = strings.ToUpper(methodMatch[1])
+		}
+		
+		// Extract input names
+		inputMatches := h.inputRegex.FindAllStringSubmatch(formHTML, -1)
+		for _, inputMatch := range inputMatches {
+			if len(inputMatch) > 1 {
+				form.Inputs = append(form.Inputs, inputMatch[1])
+			}
+		}
+		
+		// Also check for textarea and select elements
+		textareaRegex := regexp.MustCompile(`(?i)<textarea[^>]*name=["']([^"']+)["'][^>]*>`)
+		selectRegex := regexp.MustCompile(`(?i)<select[^>]*name=["']([^"']+)["'][^>]*>`)
+		
+		textareaMatches := textareaRegex.FindAllStringSubmatch(formHTML, -1)
+		for _, match := range textareaMatches {
+			if len(match) > 1 {
+				form.Inputs = append(form.Inputs, match[1])
+			}
+		}
+		
+		selectMatches := selectRegex.FindAllStringSubmatch(formHTML, -1)
+		for _, match := range selectMatches {
+			if len(match) > 1 {
+				form.Inputs = append(form.Inputs, match[1])
+			}
+		}
+		
+		// Deduplicate inputs
+		form.Inputs = h.deduplicateStrings(form.Inputs)
+		
+		if len(form.Inputs) > 0 || form.Action != "" {
+			forms = append(forms, form)
+		}
+	}
+	
+	return forms
+}
+
+func (h *HTTPModule) extractParameters(url string) []types.Parameter {
+	var parameters []types.Parameter
+	
+	// Extract parameters from URL query string
+	paramMatches := h.paramRegex.FindAllStringSubmatch(url, -1)
+	for _, match := range paramMatches {
+		if len(match) > 1 {
+			param := types.Parameter{
+				Name:   match[1],
+				Type:   "url-query",
+				Source: "http-url",
+			}
+			parameters = append(parameters, param)
+		}
+	}
+	
+	return parameters
+}
+
+func (h *HTTPModule) deduplicateStrings(input []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	
+	for _, item := range input {
+		if !seen[item] && item != "" {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	
+	return result
 }
