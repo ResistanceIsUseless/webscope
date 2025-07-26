@@ -1,0 +1,83 @@
+# Custom WebScope Wordlist
+# Lines starting with # are comments and will be ignored
+
+# Admin paths
+admin
+administrator
+admin.php
+admin.html
+admin/login
+
+# API endpoints  
+api
+api/v1
+api/v2
+graphql
+swagger
+
+# Common files
+robots.txt
+sitemap.xml
+favicon.ico
+.well-known/security.txt
+
+# Development files
+.env
+.git
+.svn
+config.json
+package.json
+
+# Backup files
+backup
+backups
+db_backup
+site_backup
+
+# Login/Auth
+login
+signin
+auth
+oauth
+sso
+
+# Content directories
+uploads
+files
+images
+media
+static
+assets
+
+# Database
+database
+db
+mysql
+postgres
+sqlite
+
+# Debug/Test
+debug
+test
+tests
+phpinfo
+info.php
+
+# Configuration
+config
+settings
+preferences
+.htaccess
+web.config
+
+# Documentation
+docs
+documentation
+readme
+help
+
+# Archive/Old versions  
+old
+archive
+deprecated
+legacy

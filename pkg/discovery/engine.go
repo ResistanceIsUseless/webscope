@@ -2,9 +2,13 @@ package discovery
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/resistanceisuseless/webscope/pkg/config"
 	"github.com/resistanceisuseless/webscope/pkg/modules"
 	"github.com/resistanceisuseless/webscope/pkg/types"
 )
@@ -15,12 +19,16 @@ type Config struct {
 	RateLimit int
 	Modules   []string
 	Verbose   bool
+	AppConfig *config.Config
 }
 
 type Engine struct {
-	config      *Config
-	modules     []types.DiscoveryModule
-	rateLimiter *RateLimiter
+	config         *Config
+	modules        []types.DiscoveryModule
+	rateLimiter    *RateLimiter
+	processedCount int64
+	totalCount     int64
+	startTime      time.Time
 }
 
 type RateLimiter struct {
@@ -84,9 +92,11 @@ func NewEngine(config *Config) *Engine {
 		case "robots":
 			engine.modules = append(engine.modules, modules.NewRobotsModule(config.Timeout))
 		case "paths":
-			engine.modules = append(engine.modules, modules.NewPathsModule(config.Timeout, true))
+			engine.modules = append(engine.modules, modules.NewPathsModule(config.Timeout, true, config.AppConfig))
 		case "javascript", "js":
 			engine.modules = append(engine.modules, modules.NewJavaScriptModule(config.Timeout))
+		case "sitemap":
+			engine.modules = append(engine.modules, modules.NewSitemapModule(config.Timeout))
 		}
 	}
 
@@ -96,15 +106,54 @@ func NewEngine(config *Config) *Engine {
 func (e *Engine) Discover(ctx context.Context, targets []types.Target) <-chan types.EngineResult {
 	results := make(chan types.EngineResult, len(targets))
 	
+	e.totalCount = int64(len(targets))
+	e.startTime = time.Now()
+	atomic.StoreInt64(&e.processedCount, 0)
+	
+	if e.config.Verbose {
+		fmt.Fprintf(os.Stderr, "[*] Starting discovery for %d targets with %d workers\n", len(targets), e.config.Workers)
+		
+		// Progress ticker
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			
+			for {
+				select {
+				case <-ticker.C:
+					processed := atomic.LoadInt64(&e.processedCount)
+					elapsed := time.Since(e.startTime)
+					rate := float64(processed) / elapsed.Seconds()
+					remaining := e.totalCount - processed
+					
+					if processed > 0 && rate > 0 {
+						eta := time.Duration(float64(remaining) / rate * float64(time.Second))
+						fmt.Fprintf(os.Stderr, "[*] Progress: %d/%d targets (%.1f%%) - Rate: %.1f/s - ETA: %s\n",
+							processed, e.totalCount,
+							float64(processed)/float64(e.totalCount)*100,
+							rate,
+							eta.Round(time.Second))
+					} else {
+						fmt.Fprintf(os.Stderr, "[*] Progress: %d/%d targets (%.1f%%) - Starting...\n",
+							processed, e.totalCount,
+							float64(processed)/float64(e.totalCount)*100)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	
 	var wg sync.WaitGroup
 	targetChan := make(chan types.Target, len(targets))
 
 	for i := 0; i < e.config.Workers; i++ {
 		wg.Add(1)
-		go func() {
+		go func(workerID int) {
 			defer wg.Done()
-			e.worker(ctx, targetChan, results)
-		}()
+			e.worker(ctx, workerID, targetChan, results)
+		}(i)
 	}
 
 	go func() {
@@ -122,12 +171,18 @@ func (e *Engine) Discover(ctx context.Context, targets []types.Target) <-chan ty
 		wg.Wait()
 		close(results)
 		e.rateLimiter.Stop()
+		
+		if e.config.Verbose {
+			processed := atomic.LoadInt64(&e.processedCount)
+			elapsed := time.Since(e.startTime)
+			fmt.Fprintf(os.Stderr, "[*] Discovery completed: %d targets in %s\n", processed, elapsed.Round(time.Second))
+		}
 	}()
 
 	return results
 }
 
-func (e *Engine) worker(ctx context.Context, targets <-chan types.Target, results chan<- types.EngineResult) {
+func (e *Engine) worker(ctx context.Context, workerID int, targets <-chan types.Target, results chan<- types.EngineResult) {
 	for {
 		select {
 		case target, ok := <-targets:
@@ -135,7 +190,27 @@ func (e *Engine) worker(ctx context.Context, targets <-chan types.Target, result
 				return
 			}
 			
+			if e.config.Verbose {
+				fmt.Fprintf(os.Stderr, "[Worker %d] Processing: %s\n", workerID, target.URL)
+			}
+			
 			result := e.processTarget(ctx, target)
+			
+			atomic.AddInt64(&e.processedCount, 1)
+			
+			if e.config.Verbose {
+				if result.Error != nil {
+					fmt.Fprintf(os.Stderr, "[Worker %d] Error on %s: %v\n", workerID, target.URL, result.Error)
+				} else {
+					paths := len(result.Discovery.Paths)
+					endpoints := len(result.Discovery.Endpoints)
+					if paths > 0 || endpoints > 0 {
+						fmt.Fprintf(os.Stderr, "[Worker %d] Found on %s: %d paths, %d endpoints\n", 
+							workerID, target.URL, paths, endpoints)
+					}
+				}
+			}
+			
 			select {
 			case results <- result:
 			case <-ctx.Done():
@@ -177,6 +252,9 @@ func (e *Engine) processTarget(ctx context.Context, target types.Target) types.E
 
 		moduleResult, err := module.Discover(target)
 		if err != nil {
+			if e.config.Verbose {
+				fmt.Fprintf(os.Stderr, "[Module %s] Error on %s: %v\n", module.Name(), target.URL, err)
+			}
 			continue
 		}
 

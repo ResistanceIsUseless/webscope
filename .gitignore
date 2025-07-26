@@ -5,7 +5,7 @@
 # Ignore all markdown files except README.md
 *.md
 !README.md
-
+!CONFIG.md
 # Binaries
 webscope
 webscope.exe

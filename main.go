@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/resistanceisuseless/webscope/pkg/config"
 	"github.com/resistanceisuseless/webscope/pkg/discovery"
 	"github.com/resistanceisuseless/webscope/pkg/input"
 	"github.com/resistanceisuseless/webscope/pkg/types"
@@ -20,15 +21,43 @@ func main() {
 	var (
 		inputFile   = flag.String("i", "", "Input file (nmap XML, JSON, or text file with one host per line)")
 		outputFile  = flag.String("o", "", "Output file (default: stdout)")
+		configFile  = flag.String("c", "", "Configuration file path (default: auto-detect)")
 		workers     = flag.Int("w", 20, "Number of worker threads")
 		timeout     = flag.Duration("t", 30*time.Second, "HTTP timeout")
 		rateLimit   = flag.Int("r", 20, "Requests per second")
-		modules     = flag.String("m", "http,robots,paths,javascript", "Discovery modules to use (comma-separated)")
+		modules     = flag.String("m", "http,robots,sitemap,paths,javascript", "Discovery modules to use (comma-separated)")
 		verbose     = flag.Bool("v", false, "Verbose output")
 	)
 	flag.Parse()
 
 	ctx := context.Background()
+
+	// Load configuration
+	var appConfig *config.Config
+	if *configFile != "" {
+		var err error
+		appConfig, err = config.Load(*configFile)
+		if err != nil {
+			log.Fatalf("Error loading config file: %v", err)
+		}
+		if *verbose {
+			fmt.Fprintf(os.Stderr, "Loaded config from: %s\n", *configFile)
+		}
+	} else {
+		// Try default config paths
+		for _, defaultPath := range config.GetDefaultConfigPaths() {
+			if _, err := os.Stat(defaultPath); err == nil {
+				appConfig, _ = config.Load(defaultPath)
+				if *verbose {
+					fmt.Fprintf(os.Stderr, "Loaded config from: %s\n", defaultPath)
+				}
+				break
+			}
+		}
+		if appConfig == nil {
+			appConfig = &config.Config{}
+		}
+	}
 
 	var inputReader io.Reader
 	if *inputFile != "" {
@@ -61,15 +90,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	config := &discovery.Config{
+	discoveryConfig := &discovery.Config{
 		Workers:   *workers,
 		Timeout:   *timeout,
 		RateLimit: *rateLimit,
 		Modules:   strings.Split(*modules, ","),
 		Verbose:   *verbose,
+		AppConfig: appConfig,
 	}
 
-	engine := discovery.NewEngine(config)
+	engine := discovery.NewEngine(discoveryConfig)
 	results := engine.Discover(ctx, targets)
 
 	output := &types.WebScopeResult{
@@ -82,7 +112,19 @@ func main() {
 		Statistics:  types.Statistics{},
 	}
 
+	// Simple progress counter for non-verbose mode
+	processedCount := 0
+	lastProgressTime := time.Now()
+	
 	for result := range results {
+		processedCount++
+		
+		// Show basic progress every 10 seconds in non-verbose mode
+		if !*verbose && time.Since(lastProgressTime) > 10*time.Second {
+			fmt.Fprintf(os.Stderr, "[*] Processed %d targets...\n", processedCount)
+			lastProgressTime = time.Now()
+		}
+		
 		if result.Error != nil {
 			if *verbose {
 				fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", result.Target.URL, result.Error)
@@ -102,6 +144,8 @@ func main() {
 		output.Discoveries[result.Target.Domain] = discovery
 		output.Statistics.TotalPaths += len(result.Discovery.Paths)
 		output.Statistics.TotalEndpoints += len(result.Discovery.Endpoints)
+		output.Statistics.TotalSecrets += len(result.Discovery.Secrets)
+		output.Statistics.TotalForms += len(result.Discovery.Forms)
 	}
 
 	var outputWriter io.Writer

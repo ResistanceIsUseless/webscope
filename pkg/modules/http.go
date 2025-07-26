@@ -91,6 +91,10 @@ func (h *HTTPModule) Discover(target types.Target) (*types.DiscoveryResult, erro
 	techs := h.identifyTechnologies(resp, body)
 	result.Technologies = append(result.Technologies, techs...)
 
+	// Analyze security headers
+	securityTechs := h.analyzeSecurityHeaders(resp)
+	result.Technologies = append(result.Technologies, securityTechs...)
+
 	// Extract forms and parameters from HTML content
 	forms := h.extractForms(string(body), target.URL)
 	result.Forms = append(result.Forms, forms...)
@@ -329,4 +333,77 @@ func (h *HTTPModule) deduplicateStrings(input []string) []string {
 	}
 	
 	return result
+}
+
+func (h *HTTPModule) analyzeSecurityHeaders(resp *http.Response) []types.Technology {
+	var technologies []types.Technology
+
+	securityHeaders := map[string]string{
+		"Content-Security-Policy":   "CSP",
+		"X-Content-Type-Options":    "Content-Type Protection",
+		"X-Frame-Options":           "Clickjacking Protection", 
+		"X-XSS-Protection":          "XSS Protection",
+		"Strict-Transport-Security": "HSTS",
+		"Referrer-Policy":           "Referrer Policy",
+		"Permissions-Policy":        "Permissions Policy",
+		"Cross-Origin-Embedder-Policy": "COEP",
+		"Cross-Origin-Opener-Policy":   "COOP",
+		"Cross-Origin-Resource-Policy": "CORP",
+	}
+
+	for header, description := range securityHeaders {
+		if value := resp.Header.Get(header); value != "" {
+			tech := types.Technology{
+				Name:     description,
+				Category: "Security Header",
+				Version:  value,
+				Source:   "http-security-headers",
+			}
+			technologies = append(technologies, tech)
+		}
+	}
+
+	// Check for missing security headers (potential issues)
+	missingHeaders := []string{
+		"Content-Security-Policy",
+		"X-Content-Type-Options", 
+		"X-Frame-Options",
+		"Strict-Transport-Security",
+	}
+
+	for _, header := range missingHeaders {
+		if resp.Header.Get(header) == "" {
+			tech := types.Technology{
+				Name:     "Missing " + securityHeaders[header],
+				Category: "Security Issue",
+				Version:  "not-set",
+				Source:   "http-security-analysis",
+			}
+			technologies = append(technologies, tech)
+		}
+	}
+
+	// CORS analysis
+	if corsOrigin := resp.Header.Get("Access-Control-Allow-Origin"); corsOrigin != "" {
+		tech := types.Technology{
+			Name:     "CORS",
+			Category: "Security Configuration",
+			Version:  corsOrigin,
+			Source:   "http-cors-analysis",
+		}
+		technologies = append(technologies, tech)
+
+		// Check for overly permissive CORS
+		if corsOrigin == "*" {
+			tech := types.Technology{
+				Name:     "Permissive CORS",
+				Category: "Security Issue", 
+				Version:  "wildcard-origin",
+				Source:   "http-cors-analysis",
+			}
+			technologies = append(technologies, tech)
+		}
+	}
+
+	return technologies
 }
