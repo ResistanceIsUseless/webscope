@@ -6,9 +6,11 @@ WebScope is a **static web content analysis tool** designed for security researc
 
 - **Multiple Input Formats**: Supports stdin, text files, nmap XML exports, and JSON
 - **Flexible Target Parsing**: Accepts URLs, host:port pairs, IP addresses, and domain names  
-- **Modular Discovery**: HTTP probing, robots.txt parsing, path bruteforcing
+- **Modular Discovery**: HTTP probing, robots.txt parsing, path bruteforcing, JavaScript analysis
+- **Streaming Output**: Real-time result streaming with JSONL and JSON formats
+- **Data Loss Prevention**: Results written immediately to prevent loss on crashes
+- **Graceful Shutdown**: Signal handling to save partial results on interruption
 - **Rate Limiting**: Built-in rate limiting to respect target infrastructure
-- **JSON Output**: Structured output for integration with other tools
 - **Concurrent Processing**: Worker pools for parallel target analysis
 
 ## Installation
@@ -36,8 +38,11 @@ webscope -i targets.txt
 # Nmap XML input
 webscope -i nmap_results.xml
 
-# Custom options
-webscope -i targets.txt -w 10 -r 50 -m http,robots,paths -v
+# Custom options with streaming output
+webscope -i targets.txt -o results.jsonl -of jsonl -w 10 -r 50 -m http,robots,paths -v
+
+# Standard JSON format (non-streaming)
+webscope -i targets.txt -o results.json -of json -v
 ```
 
 ### Input Formats
@@ -57,21 +62,35 @@ subdomain.example.com
 
 - `-i`: Input file (default: stdin)
 - `-o`: Output file (default: stdout)  
+- `-of`: Output format: jsonl (streaming JSON Lines) or json (standard JSON) (default: jsonl)
 - `-w`: Number of workers (default: 20)
 - `-r`: Rate limit requests per second (default: 20)
 - `-t`: HTTP timeout (default: 30s)
-- `-m`: Discovery modules (default: "http,robots,paths")
+- `-m`: Discovery modules (default: "http,robots,sitemap,paths,javascript")
 - `-v`: Verbose output
 
 ### Discovery Modules
 
 - **http**: Basic HTTP probing and technology identification
-- **robots**: robots.txt parsing and sitemap discovery
-- **paths**: Path bruteforcing with smart variations
+- **robots**: robots.txt parsing for allowed/disallowed paths
+- **sitemap**: XML sitemap discovery and parsing
+- **paths**: Path bruteforcing with smart variations and common endpoints
+- **javascript**: JavaScript file analysis for endpoints and secrets
 
-## Output Format
+## Output Formats
 
-WebScope outputs structured JSON with discovered paths, endpoints, and metadata:
+### JSON Lines (JSONL) - Default Streaming Format
+
+Real-time streaming output where each line is a complete JSON record:
+
+```jsonl
+{"timestamp":"2025-01-01T12:00:00Z","target":{"domain":"example.com","url":"https://example.com"},"discovery":{"domain":"example.com","paths":[...],"endpoints":[...]}}
+{"timestamp":"2025-01-01T12:00:01Z","type":"summary","statistics":{"total_paths":15,"total_endpoints":8}}
+```
+
+### Standard JSON Format 
+
+Traditional structured JSON output:
 
 ```json
 {
@@ -80,38 +99,54 @@ WebScope outputs structured JSON with discovered paths, endpoints, and metadata:
     "version": "1.0.0",
     "targets": 1
   },
-  "statistics": {
-    "total_paths": 15,
-    "total_endpoints": 8
-  },
-  "discoveries": {
-    "example.com": {
+  "discoveries": [
+    {
       "domain": "example.com",
       "paths": [...],
-      "endpoints": [...]
+      "endpoints": [...],
+      "forms": [...],
+      "secrets": [...]
     }
+  ],
+  "statistics": {
+    "total_paths": 15,
+    "total_endpoints": 8,
+    "total_secrets": 2,
+    "total_forms": 3
   }
 }
 ```
 
 ## Integration
 
-WebScope is designed to work with the ProjectDiscovery ecosystem and other security tools:
+WebScope integrates seamlessly with the security testing workflow:
 
 ```bash
-# Comprehensive reconnaissance pipeline
+# Basic reconnaissance workflow
 subscope -d example.com -o subdomains.json          # Subdomain enumeration
-cat subdomains.json | gau > historical-urls.txt     # Historical URLs from archives
-cat subdomains.json | urlfinder > more-urls.txt     # Additional URL sources
-katana -u https://example.com -d 3 -js-crawl -o active-crawl.txt  # Active crawling
+webscope -i subdomains.json -o webscope-results.jsonl  # Deep content analysis
 
-# Deep static analysis with WebScope
-webscope -i subdomains.json -o static-analysis.json  # Static analysis of targets
-cat historical-urls.txt | webscope -o historical-analysis.json  # Analyze historical URLs
+# Stream results in real-time for large scans
+webscope -i large-targets.txt -of jsonl | while IFS= read -r line; do
+  echo "$line" | jq -r '.discovery.paths[]?.url // empty' | httpx -silent
+done
 
-# Chain with validation tools
-cat static-analysis.json | jq -r '.discoveries[].paths[].url' | httpx -silent
+# Process streaming results with jq
+webscope -i targets.txt -of jsonl | jq -r 'select(.discovery) | .discovery.paths[].url'
+
+# Interrupt-safe scanning for large target lists
+webscope -i 10k-targets.txt -o results.jsonl  # Ctrl+C saves partial results
+
+# Integration with nuclei for vulnerability scanning
+webscope -i targets.txt -of jsonl | jq -r 'select(.discovery.paths) | .discovery.paths[].url' | nuclei
 ```
+
+### Streaming Benefits
+
+- **Real-time Processing**: Process results as they're discovered
+- **Memory Efficient**: No accumulation of results in memory  
+- **Crash Resistant**: Results saved immediately, no data loss on interruption
+- **Large Scale Friendly**: Handle thousands of targets without memory issues
 
 ## License
 
