@@ -2,31 +2,33 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/resistanceisuseless/webscope/pkg/config"
 	"github.com/resistanceisuseless/webscope/pkg/discovery"
 	"github.com/resistanceisuseless/webscope/pkg/input"
-	"github.com/resistanceisuseless/webscope/pkg/types"
+	"github.com/resistanceisuseless/webscope/pkg/output"
 )
 
 func main() {
 	var (
-		inputFile   = flag.String("i", "", "Input file (nmap XML, JSON, or text file with one host per line)")
-		outputFile  = flag.String("o", "", "Output file (default: stdout)")
-		configFile  = flag.String("c", "", "Configuration file path (default: auto-detect)")
-		workers     = flag.Int("w", 20, "Number of worker threads")
-		timeout     = flag.Duration("t", 30*time.Second, "HTTP timeout")
-		rateLimit   = flag.Int("r", 20, "Requests per second")
-		modules     = flag.String("m", "http,robots,sitemap,paths,javascript", "Discovery modules to use (comma-separated)")
-		verbose     = flag.Bool("v", false, "Verbose output")
+		inputFile    = flag.String("i", "", "Input file (nmap XML, JSON, or text file with one host per line)")
+		outputFile   = flag.String("o", "", "Output file (default: stdout)")
+		outputFormat = flag.String("of", "jsonl", "Output format: jsonl (streaming JSON Lines) or json (standard JSON)")
+		configFile   = flag.String("c", "", "Configuration file path (default: auto-detect)")
+		workers      = flag.Int("w", 20, "Number of worker threads")
+		timeout      = flag.Duration("t", 30*time.Second, "HTTP timeout")
+		rateLimit    = flag.Int("r", 20, "Requests per second")
+		modules      = flag.String("m", "http,robots,sitemap,paths,javascript", "Discovery modules to use (comma-separated)")
+		verbose      = flag.Bool("v", false, "Verbose output")
 	)
 	flag.Parse()
 
@@ -99,18 +101,30 @@ func main() {
 		AppConfig: appConfig,
 	}
 
+	// Create streaming writer
+	streamWriter, err := output.NewStreamingWriter(*outputFile, *outputFormat)
+	if err != nil {
+		log.Fatalf("Error creating output writer: %v", err)
+	}
+	defer streamWriter.Close()
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	
+	// Create a cancellable context
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	
+	// Handle signals
+	go func() {
+		<-sigChan
+		fmt.Fprintf(os.Stderr, "\n[!] Received interrupt signal, saving partial results...\n")
+		cancel()
+	}()
+
 	engine := discovery.NewEngine(discoveryConfig)
 	results := engine.Discover(ctx, targets)
-
-	output := &types.WebScopeResult{
-		Metadata: types.Metadata{
-			Timestamp: time.Now(),
-			Version:   "1.0.0",
-			Targets:   len(targets),
-		},
-		Discoveries: make(map[string]*types.Discovery),
-		Statistics:  types.Statistics{},
-	}
 
 	// Simple progress counter for non-verbose mode
 	processedCount := 0
@@ -132,42 +146,17 @@ func main() {
 			continue
 		}
 
-		discovery := &types.Discovery{
-			Domain:     result.Target.Domain,
-			Paths:      result.Discovery.Paths,
-			Endpoints:  result.Discovery.Endpoints,
-			Forms:      result.Discovery.Forms,
-			Parameters: result.Discovery.Parameters,
-			Secrets:    result.Discovery.Secrets,
+		// Write result immediately to prevent data loss
+		if err := streamWriter.WriteResult(result); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing result for %s: %v\n", result.Target.Domain, err)
 		}
-
-		output.Discoveries[result.Target.Domain] = discovery
-		output.Statistics.TotalPaths += len(result.Discovery.Paths)
-		output.Statistics.TotalEndpoints += len(result.Discovery.Endpoints)
-		output.Statistics.TotalSecrets += len(result.Discovery.Secrets)
-		output.Statistics.TotalForms += len(result.Discovery.Forms)
 	}
 
-	var outputWriter io.Writer
-	if *outputFile != "" {
-		file, err := os.Create(*outputFile)
-		if err != nil {
-			log.Fatalf("Error creating output file: %v", err)
-		}
-		defer file.Close()
-		outputWriter = file
-	} else {
-		outputWriter = os.Stdout
-	}
-
-	encoder := json.NewEncoder(outputWriter)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(output); err != nil {
-		log.Fatalf("Error encoding output: %v", err)
-	}
-
+	// Get final statistics
+	stats := streamWriter.GetStatistics()
+	
 	if *verbose {
-		fmt.Fprintf(os.Stderr, "Discovery complete. Found %d paths, %d endpoints across %d domains\n",
-			output.Statistics.TotalPaths, output.Statistics.TotalEndpoints, len(output.Discoveries))
+		fmt.Fprintf(os.Stderr, "Discovery complete. Found %d paths, %d endpoints\n",
+			stats.TotalPaths, stats.TotalEndpoints)
 	}
 }
