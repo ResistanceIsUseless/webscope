@@ -1,0 +1,50 @@
+{
+  "wordlists": {
+    "common_paths": "common-paths.txt"
+  },
+  "jsluice": {
+    "patterns": {
+      "urls": [
+        "window\\.location\\.href\\s*=\\s*[\"']([^\"']+)[\"']",
+        "fetch\\([\"']([^\"']+)[\"']",
+        "axios\\.\\w+\\([\"']([^\"']+)[\"']",
+        "\\.ajax\\(\\{[^}]*url:\\s*[\"']([^\"']+)[\"']"
+      ],
+      "secrets": [
+        "(?i)(api[_-]?key|apikey)\\s*[:=]\\s*[\"']([a-zA-Z0-9_\\-]{20,})[\"']",
+        "(?i)(secret[_-]?key|secretkey)\\s*[:=]\\s*[\"']([a-zA-Z0-9_\\-]{20,})[\"']",
+        "(?i)bearer\\s+([a-zA-Z0-9_\\-\\.]+)",
+        "(?i)(password|passwd|pwd)\\s*[:=]\\s*[\"']([^\"']{8,})[\"']",
+        "(?i)(token)\\s*[:=]\\s*[\"']([a-zA-Z0-9_\\-\\.]{20,})[\"']"
+      ],
+      "endpoints": [
+        "\\/api\\/v\\d+\\/[\\w\\-\\/]+",
+        "(?i)(graphql|rest|api)\\s*:\\s*[\"']([^\"']+)[\"']",
+        "route\\([\"']([^\"']+)[\"']",
+        "path\\s*:\\s*[\"'](\\/[^\"']+)[\"']"
+      ]
+    }
+  },
+  "katana": {
+    "depth": 3,
+    "rate_limit": 50,
+    "timeout": 30,
+    "jsluice": true,
+    "form_extract": true
+  },
+  "httpx": {
+    "threads": 50,
+    "rate_limit": 100,
+    "timeout": 30,
+    "retries": 2,
+    "follow_redirect": true,
+    "status_codes": ["200,201,202,203,204,205,206,207,208,226,300,301,302,303,304,305,307,308,401,403,404,405,500,501,502,503"]
+  },
+  "false_positive": {
+    "enabled": true,
+    "max_length_diff": 100,
+    "min_length_ratio": 0.95,
+    "similarity_threshold": 0.8,
+    "baseline_count": 5
+  }
+}

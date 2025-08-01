@@ -2,24 +2,39 @@ package modules
 
 import (
 	"bufio"
-	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
+	"github.com/resistanceisuseless/webscope/pkg/config"
 	"github.com/resistanceisuseless/webscope/pkg/types"
 )
 
 type RobotsModule struct {
-	client *http.Client
+	httpx      *HTTPXModule
+	fpDetector *FalsePositiveDetector
 }
 
 func NewRobotsModule(timeout time.Duration) *RobotsModule {
 	return &RobotsModule{
-		client: &http.Client{
-			Timeout: timeout,
-		},
+		httpx:      NewHTTPXModule(10, timeout, 10), // Lower threads and rate limit for robots.txt
+		fpDetector: NewFalsePositiveDetector(timeout, 10),
+	}
+}
+
+func NewRobotsModuleWithConfig(timeout time.Duration, appConfig *config.Config) *RobotsModule {
+	threads := 10
+	rateLimit := 10
+	
+	if appConfig != nil && appConfig.HTTPX.Threads > 0 {
+		threads = appConfig.HTTPX.Threads
+	}
+	if appConfig != nil && appConfig.HTTPX.RateLimit > 0 {
+		rateLimit = appConfig.HTTPX.RateLimit
+	}
+	
+	return &RobotsModule{
+		httpx:      NewHTTPXModule(threads, timeout, rateLimit),
+		fpDetector: NewFalsePositiveDetector(timeout, rateLimit),
 	}
 }
 
@@ -39,82 +54,144 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 
 	robotsURL := strings.TrimSuffix(target.URL, "/") + "/robots.txt"
 	
-	req, err := http.NewRequest("GET", robotsURL, nil)
-	if err != nil {
-		return result, fmt.Errorf("error creating robots.txt request: %v", err)
+	// Use httpx to check if robots.txt exists
+	httpxResult, err := r.httpx.probeTarget(robotsURL)
+	if err != nil || httpxResult == nil || httpxResult.StatusCode != 200 {
+		return result, nil // No robots.txt found
 	}
 
-	req.Header.Set("User-Agent", "WebScope/1.0")
-
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return result, fmt.Errorf("error fetching robots.txt: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return result, nil
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return result, fmt.Errorf("error reading robots.txt: %v", err)
-	}
-
-	paths, sitemaps := r.parseRobots(string(body))
-
+	// Record the robots.txt file itself
 	robotsPath := types.Path{
 		URL:         robotsURL,
-		Status:      resp.StatusCode,
-		Length:      len(body),
+		Status:      httpxResult.StatusCode,
+		Length:      httpxResult.ContentLength,
 		Method:      "GET",
-		ContentType: resp.Header.Get("Content-Type"),
+		ContentType: httpxResult.ContentType,
 		Source:      "robots",
 	}
 	result.Paths = append(result.Paths, robotsPath)
 
-	for _, path := range paths {
-		if path != "" && path != "/" {
-			fullURL := strings.TrimSuffix(target.URL, "/") + path
-			endpoint := types.Endpoint{
-				Path:   path,
-				Type:   "robots-disallow",
-				Source: "robots",
+	// Since we can't get the body content from httpx directly,
+	// we'll probe common disallowed paths that are typically in robots.txt
+	baseURL := strings.TrimSuffix(target.URL, "/")
+	
+	// Common paths found in robots.txt files
+	commonDisallowedPaths := []string{
+		"/admin", "/admin/",
+		"/api", "/api/",
+		"/backup", "/backup/",
+		"/config", "/config/",
+		"/private", "/private/",
+		"/test", "/test/",
+		"/tmp", "/tmp/",
+		"/dev", "/dev/",
+		"/staging", "/staging/",
+		"/.git", "/.git/",
+		"/.env",
+		"/wp-admin", "/wp-admin/",
+		"/wp-content", "/wp-content/",
+		"/wp-includes", "/wp-includes/",
+		"/cgi-bin", "/cgi-bin/",
+		"/scripts", "/scripts/",
+		"/includes", "/includes/",
+		"/lib", "/lib/",
+		"/src", "/src/",
+		"/vendor", "/vendor/",
+		"/node_modules", "/node_modules/",
+		"/cache", "/cache/",
+		"/logs", "/logs/",
+		"/database", "/database/",
+		"/db", "/db/",
+		"/sql", "/sql/",
+		"/phpmyadmin", "/phpmyadmin/",
+		"/phpMyAdmin", "/phpMyAdmin/",
+		"/setup", "/setup/",
+		"/install", "/install/",
+		"/console", "/console/",
+		"/status", "/status/",
+		"/server-status",
+		"/server-info",
+	}
+
+	// Build URLs to probe
+	var urlsToProbe []string
+	for _, path := range commonDisallowedPaths {
+		fullURL := baseURL + path
+		urlsToProbe = append(urlsToProbe, fullURL)
+	}
+
+	// Probe paths using httpx bulk
+	httpxResults, err := r.httpx.ProbeBulk(urlsToProbe)
+	if err == nil {
+		for _, httpxRes := range httpxResults {
+			// Accept various status codes as valid discoveries
+			if httpxRes.StatusCode > 0 && httpxRes.StatusCode < 500 {
+				discoveredPath := types.Path{
+					URL:         httpxRes.URL,
+					Status:      httpxRes.StatusCode,
+					Length:      httpxRes.ContentLength,
+					Method:      "GET",
+					ContentType: httpxRes.ContentType,
+					Title:       httpxRes.Title,
+					Source:      "robots-common",
+				}
+				result.Paths = append(result.Paths, discoveredPath)
+				
+				// Extract path for endpoint
+				pathOnly := strings.TrimPrefix(httpxRes.URL, baseURL)
+				endpoint := types.Endpoint{
+					Path:   pathOnly,
+					Type:   "robots-discovered",
+					Method: "GET",
+					Source: "robots",
+				}
+				result.Endpoints = append(result.Endpoints, endpoint)
 			}
-			result.Endpoints = append(result.Endpoints, endpoint)
-			
-			pathResult := types.Path{
-				URL:    fullURL,
-				Source: "robots-disallow",
-			}
-			result.Paths = append(result.Paths, pathResult)
 		}
 	}
 
-	for _, sitemap := range sitemaps {
-		if sitemap != "" {
-			endpoint := types.Endpoint{
-				Path:   sitemap,
-				Type:   "sitemap",
-				Source: "robots",
-			}
-			result.Endpoints = append(result.Endpoints, endpoint)
-			
-			if strings.HasPrefix(sitemap, "http") {
-				pathResult := types.Path{
-					URL:    sitemap,
-					Source: "robots-sitemap",
+	// Also check for common sitemap locations
+	sitemapURLs := []string{
+		baseURL + "/sitemap.xml",
+		baseURL + "/sitemap_index.xml",
+		baseURL + "/sitemap-index.xml",
+		baseURL + "/sitemap.xml.gz",
+		baseURL + "/sitemap1.xml",
+		baseURL + "/sitemap/sitemap.xml",
+		baseURL + "/sitemaps/sitemap.xml",
+	}
+
+	sitemapResults, err := r.httpx.ProbeBulk(sitemapURLs)
+	if err == nil {
+		for _, httpxRes := range sitemapResults {
+			if httpxRes.StatusCode == 200 {
+				sitemapPath := types.Path{
+					URL:         httpxRes.URL,
+					Status:      httpxRes.StatusCode,
+					Length:      httpxRes.ContentLength,
+					Method:      "GET",
+					ContentType: httpxRes.ContentType,
+					Source:      "robots-sitemap",
 				}
-				result.Paths = append(result.Paths, pathResult)
-			} else {
-				fullURL := strings.TrimSuffix(target.URL, "/") + sitemap
-				pathResult := types.Path{
-					URL:    fullURL,
-					Source: "robots-sitemap",
+				result.Paths = append(result.Paths, sitemapPath)
+				
+				// Add sitemap as endpoint
+				pathOnly := strings.TrimPrefix(httpxRes.URL, baseURL)
+				endpoint := types.Endpoint{
+					Path:   pathOnly,
+					Type:   "sitemap",
+					Source: "robots",
 				}
-				result.Paths = append(result.Paths, pathResult)
+				result.Endpoints = append(result.Endpoints, endpoint)
 			}
 		}
+	}
+
+	// Generate baseline and filter false positives
+	err = r.fpDetector.GenerateBaseline(baseURL)
+	if err == nil {
+		// Only apply filtering if baseline generation succeeded
+		result = r.fpDetector.FilterFalsePositives(baseURL, result)
 	}
 
 	return result, nil

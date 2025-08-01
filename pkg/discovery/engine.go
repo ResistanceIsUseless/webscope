@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/resistanceisuseless/webscope/pkg/config"
+	appconfig "github.com/resistanceisuseless/webscope/pkg/config"
 	"github.com/resistanceisuseless/webscope/pkg/modules"
 	"github.com/resistanceisuseless/webscope/pkg/types"
 )
@@ -19,7 +19,7 @@ type Config struct {
 	RateLimit int
 	Modules   []string
 	Verbose   bool
-	AppConfig *config.Config
+	AppConfig *appconfig.Config
 }
 
 type Engine struct {
@@ -87,16 +87,44 @@ func NewEngine(config *Config) *Engine {
 
 	for _, moduleName := range config.Modules {
 		switch moduleName {
+		case "httpx":
+			// Configure httpx module with settings from config
+			threads := 50
+			rateLimit := config.RateLimit
+			if config.AppConfig != nil && config.AppConfig.HTTPX.Threads > 0 {
+				threads = config.AppConfig.HTTPX.Threads
+			}
+			if config.AppConfig != nil && config.AppConfig.HTTPX.RateLimit > 0 {
+				rateLimit = config.AppConfig.HTTPX.RateLimit
+			}
+			engine.modules = append(engine.modules, modules.NewHTTPXModule(threads, config.Timeout, rateLimit))
 		case "http":
+			// Deprecated: Use httpx module instead
 			engine.modules = append(engine.modules, modules.NewHTTPModule(config.Timeout))
 		case "robots":
 			engine.modules = append(engine.modules, modules.NewRobotsModule(config.Timeout))
 		case "paths":
 			engine.modules = append(engine.modules, modules.NewPathsModule(config.Timeout, true, config.AppConfig))
 		case "javascript", "js":
-			engine.modules = append(engine.modules, modules.NewJavaScriptModule(config.Timeout))
+			// Pass jsluice config to JavaScript module
+			var jsConfig *appconfig.JSluiceConfig
+			if config.AppConfig != nil {
+				jsConfig = &config.AppConfig.JSluice
+			}
+			engine.modules = append(engine.modules, modules.NewJavaScriptModule(config.Timeout, jsConfig))
 		case "sitemap":
 			engine.modules = append(engine.modules, modules.NewSitemapModule(config.Timeout))
+		case "katana":
+			// Configure katana module with settings from config
+			depth := 3
+			rateLimit := config.RateLimit
+			if config.AppConfig != nil && config.AppConfig.Katana.Depth > 0 {
+				depth = config.AppConfig.Katana.Depth
+			}
+			if config.AppConfig != nil && config.AppConfig.Katana.RateLimit > 0 {
+				rateLimit = config.AppConfig.Katana.RateLimit
+			}
+			engine.modules = append(engine.modules, modules.NewKatanaModule(depth, config.Timeout, rateLimit))
 		}
 	}
 

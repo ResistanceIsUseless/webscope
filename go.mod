@@ -2,8 +2,9 @@ module github.com/resistanceisuseless/webscope
 
 go 1.21
 
+require github.com/BishopFox/jsluice v0.0.0-20240110145140-0ddfab153e06
+
 require (
-	github.com/BishopFox/jsluice v0.0.0-20240110145140-0ddfab153e06 // indirect
 	github.com/PuerkitoBio/goquery v1.8.1 // indirect
 	github.com/andybalholm/cascadia v1.3.2 // indirect
 	github.com/ditashi/jsbeautifier-go v0.0.0-20141206144643-2520a8026a9c // indirect

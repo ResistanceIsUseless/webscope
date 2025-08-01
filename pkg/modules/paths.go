@@ -3,8 +3,6 @@ package modules
 import (
 	"bufio"
 	"embed"
-	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -14,21 +12,32 @@ import (
 )
 
 type PathsModule struct {
-	client    *http.Client
+	httpx     *HTTPXModule
 	wordlist  []string
 	smartMode bool
+	fpDetector *FalsePositiveDetector
 }
 
 //go:embed wordlists/common-paths.txt
 var wordlistFS embed.FS
 
 func NewPathsModule(timeout time.Duration, smartMode bool, appConfig *config.Config) *PathsModule {
+	// Configure httpx settings
+	threads := 50
+	rateLimit := 100
+	
+	if appConfig != nil && appConfig.HTTPX.Threads > 0 {
+		threads = appConfig.HTTPX.Threads
+	}
+	if appConfig != nil && appConfig.HTTPX.RateLimit > 0 {
+		rateLimit = appConfig.HTTPX.RateLimit
+	}
+	
 	return &PathsModule{
-		client: &http.Client{
-			Timeout: timeout,
-		},
-		wordlist:  loadWordlist(appConfig),
-		smartMode: smartMode,
+		httpx:      NewHTTPXModule(threads, timeout, rateLimit),
+		wordlist:   loadWordlist(appConfig),
+		smartMode:  smartMode,
+		fpDetector: NewFalsePositiveDetector(timeout, rateLimit),
 	}
 }
 
@@ -47,20 +56,45 @@ func (p *PathsModule) Discover(target types.Target) (*types.DiscoveryResult, err
 	}
 
 	baseURL := strings.TrimSuffix(target.URL, "/")
-
+	
+	// Generate baseline for false positive detection
+	err := p.fpDetector.GenerateBaseline(baseURL)
+	if err != nil {
+		// Continue without false positive detection if baseline generation fails
+		// This ensures the module still works even if baseline fails
+	}
+	
+	// Build URLs for all paths
+	var urls []string
 	for _, path := range p.wordlist {
 		fullURL := baseURL + "/" + strings.TrimPrefix(path, "/")
-		
-		pathResult, err := p.probePath(fullURL)
-		if err != nil {
-			continue
-		}
+		urls = append(urls, fullURL)
+	}
 
-		if pathResult.Status > 0 && pathResult.Status < 400 {
-			result.Paths = append(result.Paths, pathResult)
+	// Use httpx bulk probing
+	httpxResults, err := p.httpx.ProbeBulk(urls)
+	if err != nil {
+		return result, err
+	}
+
+	// Process httpx results
+	for _, httpxResult := range httpxResults {
+		if httpxResult.StatusCode > 0 && httpxResult.StatusCode < 400 {
+			path := types.Path{
+				URL:         httpxResult.URL,
+				Status:      httpxResult.StatusCode,
+				Length:      httpxResult.ContentLength,
+				Method:      "GET",
+				ContentType: httpxResult.ContentType,
+				Title:       httpxResult.Title,
+				Source:      "paths-httpx",
+			}
+			result.Paths = append(result.Paths, path)
 			
+			// Extract path from URL
+			discoveredPath := p.extractPath(httpxResult.URL, baseURL)
 			endpoint := types.Endpoint{
-				Path:   "/" + strings.TrimPrefix(path, "/"),
+				Path:   discoveredPath,
 				Type:   "discovered",
 				Method: "GET",
 				Source: "paths",
@@ -69,62 +103,44 @@ func (p *PathsModule) Discover(target types.Target) (*types.DiscoveryResult, err
 		}
 	}
 
+	// Smart mode: generate variations based on discovered paths
 	if p.smartMode && len(result.Paths) > 0 {
 		variations := p.generateVariations(result.Paths, baseURL)
-		for _, variation := range variations {
-			pathResult, err := p.probePath(variation)
-			if err != nil {
-				continue
-			}
-
-			if pathResult.Status > 0 && pathResult.Status < 400 {
-				result.Paths = append(result.Paths, pathResult)
-				
-				// Add as endpoint too
-				parsedURL := p.extractPath(variation, baseURL)
-				endpoint := types.Endpoint{
-					Path:   parsedURL,
-					Type:   "smart-variation",
-					Method: "GET",
-					Source: "paths",
+		
+		// Probe variations using httpx bulk
+		varHttpxResults, err := p.httpx.ProbeBulk(variations)
+		if err == nil {
+			for _, httpxResult := range varHttpxResults {
+				if httpxResult.StatusCode > 0 && httpxResult.StatusCode < 400 {
+					path := types.Path{
+						URL:         httpxResult.URL,
+						Status:      httpxResult.StatusCode,
+						Length:      httpxResult.ContentLength,
+						Method:      "GET",
+						ContentType: httpxResult.ContentType,
+						Title:       httpxResult.Title,
+						Source:      "paths-variation",
+					}
+					result.Paths = append(result.Paths, path)
+					
+					// Add as endpoint too
+					parsedURL := p.extractPath(httpxResult.URL, baseURL)
+					endpoint := types.Endpoint{
+						Path:   parsedURL,
+						Type:   "smart-variation",
+						Method: "GET",
+						Source: "paths",
+					}
+					result.Endpoints = append(result.Endpoints, endpoint)
 				}
-				result.Endpoints = append(result.Endpoints, endpoint)
 			}
 		}
 	}
 
-	return result, nil
-}
-
-func (p *PathsModule) probePath(url string) (types.Path, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return types.Path{}, err
-	}
-
-	req.Header.Set("User-Agent", "WebScope/1.0")
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return types.Path{}, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return types.Path{}, err
-	}
-
-	path := types.Path{
-		URL:         url,
-		Status:      resp.StatusCode,
-		Length:      len(body),
-		Method:      "GET",
-		ContentType: resp.Header.Get("Content-Type"),
-		Source:      "paths",
-	}
-
-	return path, nil
+	// Apply false positive filtering to the final results
+	filteredResult := p.fpDetector.FilterFalsePositives(baseURL, result)
+	
+	return filteredResult, nil
 }
 
 func (p *PathsModule) generateVariations(discoveredPaths []types.Path, baseURL string) []string {
@@ -216,14 +232,6 @@ func (p *PathsModule) extractPath(fullURL, baseURL string) string {
 		return path
 	}
 	return fullURL
-}
-
-func (p *PathsModule) extractBasePath(url string) string {
-	parts := strings.Split(url, "/")
-	if len(parts) > 3 {
-		return strings.Join(parts[:len(parts)-1], "/")
-	}
-	return url
 }
 
 func (p *PathsModule) deduplicateStrings(input []string) []string {

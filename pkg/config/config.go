@@ -7,11 +7,50 @@ import (
 )
 
 type Config struct {
-	Wordlists WordlistConfig `json:"wordlists"`
+	Wordlists     WordlistConfig      `json:"wordlists"`
+	JSluice       JSluiceConfig       `json:"jsluice"`
+	Katana        KatanaConfig        `json:"katana"`
+	HTTPX         HTTPXConfig         `json:"httpx"`
+	FalsePositive FalsePositiveConfig `json:"false_positive"`
 }
 
 type WordlistConfig struct {
 	CommonPaths string `json:"common_paths,omitempty"`
+}
+
+type JSluiceConfig struct {
+	Patterns JSluicePatterns `json:"patterns"`
+}
+
+type JSluicePatterns struct {
+	URLs      []string `json:"urls,omitempty"`
+	Secrets   []string `json:"secrets,omitempty"`
+	Endpoints []string `json:"endpoints,omitempty"`
+}
+
+type KatanaConfig struct {
+	Depth       int  `json:"depth,omitempty"`
+	RateLimit   int  `json:"rate_limit,omitempty"`
+	Timeout     int  `json:"timeout,omitempty"`
+	JSluice     bool `json:"jsluice,omitempty"`
+	FormExtract bool `json:"form_extract,omitempty"`
+}
+
+type HTTPXConfig struct {
+	Threads        int      `json:"threads,omitempty"`
+	RateLimit      int      `json:"rate_limit,omitempty"`
+	Timeout        int      `json:"timeout,omitempty"`
+	Retries        int      `json:"retries,omitempty"`
+	FollowRedirect bool     `json:"follow_redirect,omitempty"`
+	StatusCodes    []string `json:"status_codes,omitempty"`
+}
+
+type FalsePositiveConfig struct {
+	Enabled          bool    `json:"enabled,omitempty"`
+	MaxLengthDiff    int     `json:"max_length_diff,omitempty"`
+	MinLengthRatio   float64 `json:"min_length_ratio,omitempty"`
+	SimilarityThreshold float64 `json:"similarity_threshold,omitempty"`
+	BaselineCount    int     `json:"baseline_count,omitempty"`
 }
 
 func Load(configPath string) (*Config, error) {
