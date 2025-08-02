@@ -7,6 +7,9 @@ WebScope is a **static web content analysis tool** designed for security researc
 - **Multiple Input Formats**: Supports stdin, text files, nmap XML exports, and JSON
 - **Flexible Target Parsing**: Accepts URLs, host:port pairs, IP addresses, and domain names  
 - **Modular Discovery**: HTTP probing, robots.txt parsing, path bruteforcing, JavaScript analysis
+- **Advanced JavaScript Analysis**: Deep static analysis using jsluice for GraphQL schemas, WebSocket endpoints, and secrets
+- **Enhanced False Positive Detection**: Machine learning-based pattern recognition to filter wildcard responses
+- **Entropy-Based Secret Detection**: Advanced secret classification with Shannon entropy analysis
 - **Streaming Output**: Real-time result streaming with JSONL and JSON formats
 - **Data Loss Prevention**: Results written immediately to prevent loss on crashes
 - **Graceful Shutdown**: Signal handling to save partial results on interruption
@@ -74,8 +77,9 @@ subdomain.example.com
 - **http**: Basic HTTP probing and technology identification
 - **robots**: robots.txt parsing for allowed/disallowed paths
 - **sitemap**: XML sitemap discovery and parsing
-- **paths**: Path bruteforcing with smart variations and common endpoints
+- **paths**: Path bruteforcing with smart variations, common endpoints, and enhanced false positive detection
 - **javascript**: JavaScript file analysis for endpoints and secrets
+- **advanced-javascript**: Deep JavaScript analysis using jsluice for GraphQL schemas, WebSocket endpoints, and entropy-based secret detection
 
 ## Output Formats
 

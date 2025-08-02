@@ -26,6 +26,8 @@ type DiscoveryResult struct {
 	Secrets      []Secret     `json:"secrets,omitempty"`
 	Forms        []Form       `json:"forms,omitempty"`
 	Parameters   []Parameter  `json:"parameters,omitempty"`
+	GraphQLSchemas []GraphQLSchema `json:"graphql_schemas,omitempty"`
+	WebSockets   []WebSocketEndpoint `json:"websockets,omitempty"`
 }
 
 type Path struct {
@@ -57,10 +59,12 @@ type Technology struct {
 }
 
 type Secret struct {
-	Type    string `json:"type"`
-	Value   string `json:"value,omitempty"`
-	Context string `json:"context,omitempty"`
-	Source  string `json:"source"`
+	Type     string  `json:"type"`
+	Value    string  `json:"value,omitempty"`
+	Context  string  `json:"context,omitempty"`
+	Source   string  `json:"source"`
+	Entropy  float64 `json:"entropy,omitempty"`
+	Strength string  `json:"strength,omitempty"`
 }
 
 type Form struct {
@@ -76,6 +80,60 @@ type Parameter struct {
 	Source string `json:"source"`
 }
 
+type GraphQLSchema struct {
+	Endpoint     string               `json:"endpoint"`
+	Schema       string               `json:"schema,omitempty"`
+	Types        []GraphQLType        `json:"types,omitempty"`
+	Queries      []GraphQLOperation   `json:"queries,omitempty"`
+	Mutations    []GraphQLOperation   `json:"mutations,omitempty"`
+	Subscriptions []GraphQLOperation  `json:"subscriptions,omitempty"`
+	Source       string               `json:"source"`
+}
+
+type GraphQLType struct {
+	Name        string            `json:"name"`
+	Kind        string            `json:"kind"` // OBJECT, SCALAR, ENUM, etc.
+	Fields      []GraphQLField    `json:"fields,omitempty"`
+	Description string            `json:"description,omitempty"`
+}
+
+type GraphQLField struct {
+	Name        string              `json:"name"`
+	Type        string              `json:"type"`
+	Args        []GraphQLArgument   `json:"args,omitempty"`
+	Description string              `json:"description,omitempty"`
+}
+
+type GraphQLArgument struct {
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	DefaultValue string `json:"default_value,omitempty"`
+	Description  string `json:"description,omitempty"`
+}
+
+type GraphQLOperation struct {
+	Name        string              `json:"name"`
+	Type        string              `json:"type"` // query, mutation, subscription
+	Args        []GraphQLArgument   `json:"args,omitempty"`
+	ReturnType  string              `json:"return_type,omitempty"`
+	Description string              `json:"description,omitempty"`
+}
+
+type WebSocketEndpoint struct {
+	URL         string            `json:"url"`
+	Protocol    string            `json:"protocol,omitempty"` // ws, wss
+	Subprotocol string            `json:"subprotocol,omitempty"`
+	Events      []WebSocketEvent  `json:"events,omitempty"`
+	Source      string            `json:"source"`
+}
+
+type WebSocketEvent struct {
+	Name        string                 `json:"name"`
+	Type        string                 `json:"type"` // emit, on, send, receive
+	Data        map[string]interface{} `json:"data,omitempty"`
+	Description string                 `json:"description,omitempty"`
+}
+
 type WebScopeResult struct {
 	Metadata     Metadata               `json:"metadata"`
 	Statistics   Statistics             `json:"statistics"`
@@ -84,13 +142,15 @@ type WebScopeResult struct {
 }
 
 type Discovery struct {
-	Domain      string      `json:"domain"`
-	Paths       []Path      `json:"paths,omitempty"`
-	Endpoints   []Endpoint  `json:"endpoints,omitempty"`
-	Forms       []Form      `json:"forms,omitempty"`
-	Parameters  []Parameter `json:"parameters,omitempty"`
-	Secrets     []Secret    `json:"secrets,omitempty"`
-	Historical  []Path      `json:"historical,omitempty"`
+	Domain         string                `json:"domain"`
+	Paths          []Path                `json:"paths,omitempty"`
+	Endpoints      []Endpoint            `json:"endpoints,omitempty"`
+	Forms          []Form                `json:"forms,omitempty"`
+	Parameters     []Parameter           `json:"parameters,omitempty"`
+	Secrets        []Secret              `json:"secrets,omitempty"`
+	Historical     []Path                `json:"historical,omitempty"`
+	GraphQLSchemas []GraphQLSchema       `json:"graphql_schemas,omitempty"`
+	WebSockets     []WebSocketEndpoint   `json:"websockets,omitempty"`
 }
 
 type Metadata struct {

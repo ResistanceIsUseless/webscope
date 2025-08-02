@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"math"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,9 +14,11 @@ import (
 
 // FalsePositiveDetector detects wildcard responses and filters false positives
 type FalsePositiveDetector struct {
-	httpx       *HTTPXModule
-	baselines   map[string]*BaselineResponse
-	thresholds  *FilterThresholds
+	httpx             *HTTPXModule
+	baselines         map[string]*BaselineResponse
+	thresholds        *FilterThresholds
+	patternAnalyzer   *PatternAnalyzer
+	responseSignatures map[string]*ResponseSignature
 }
 
 // BaselineResponse stores baseline response characteristics for comparison
@@ -33,18 +37,68 @@ type FilterThresholds struct {
 	StatusCodeWeight  float64 // Weight for status code matching
 	ContentTypeWeight float64 // Weight for content type matching
 	LengthWeight      float64 // Weight for content length similarity
+	PatternWeight     float64 // Weight for pattern-based detection
+}
+
+// PatternAnalyzer provides advanced pattern-based false positive detection
+type PatternAnalyzer struct {
+	errorPatterns    []*regexp.Regexp
+	wildcardPatterns []*regexp.Regexp
+	redirectPatterns []*regexp.Regexp
+	titlePatterns    []*regexp.Regexp
+}
+
+// ResponseSignature represents a learned response pattern
+type ResponseSignature struct {
+	StatusCode     int                 `json:"status_code"`
+	ContentLength  int                 `json:"content_length"`
+	ContentType    string              `json:"content_type"`
+	TitlePatterns  []string            `json:"title_patterns"`
+	BodyPatterns   []string            `json:"body_patterns"`
+	HeaderPatterns map[string][]string `json:"header_patterns"`
+	Confidence     float64             `json:"confidence"`
+	SeenCount      int                 `json:"seen_count"`
 }
 
 func NewFalsePositiveDetector(timeout time.Duration, rateLimit int) *FalsePositiveDetector {
 	return &FalsePositiveDetector{
-		httpx:     NewHTTPXModule(20, timeout, rateLimit),
-		baselines: make(map[string]*BaselineResponse),
+		httpx:              NewHTTPXModule(20, timeout, rateLimit),
+		baselines:          make(map[string]*BaselineResponse),
+		responseSignatures: make(map[string]*ResponseSignature),
+		patternAnalyzer:    NewPatternAnalyzer(),
 		thresholds: &FilterThresholds{
 			MaxLengthDiff:     100,   // Allow 100 byte difference
 			MinLengthRatio:    0.95,  // 95% similarity for length
-			StatusCodeWeight:  0.4,   // 40% weight for status code
-			ContentTypeWeight: 0.3,   // 30% weight for content type
-			LengthWeight:      0.3,   // 30% weight for length
+			StatusCodeWeight:  0.3,   // 30% weight for status code
+			ContentTypeWeight: 0.25,  // 25% weight for content type
+			LengthWeight:      0.25,  // 25% weight for length
+			PatternWeight:     0.2,   // 20% weight for pattern analysis
+		},
+	}
+}
+
+func NewPatternAnalyzer() *PatternAnalyzer {
+	return &PatternAnalyzer{
+		errorPatterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)(not found|404|page not found|file not found)`),
+			regexp.MustCompile(`(?i)(forbidden|403|access denied|unauthorized)`),
+			regexp.MustCompile(`(?i)(error|exception|stack trace|internal server error)`),
+			regexp.MustCompile(`(?i)(bad request|400|invalid|malformed)`),
+		},
+		wildcardPatterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)(default page|welcome|apache|nginx|iis)`),
+			regexp.MustCompile(`(?i)(coming soon|under construction|maintenance)`),
+			regexp.MustCompile(`(?i)(placeholder|template|example|demo)`),
+		},
+		redirectPatterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)(moved|redirect|location|temporary|permanent)`),
+			regexp.MustCompile(`(?i)(301|302|303|307|308)`),
+		},
+		titlePatterns: []*regexp.Regexp{
+			regexp.MustCompile(`^Index of`),
+			regexp.MustCompile(`404.*Not Found`),
+			regexp.MustCompile(`403.*Forbidden`),
+			regexp.MustCompile(`Error \d+`),
 		},
 	}
 }
