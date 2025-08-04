@@ -12,10 +12,16 @@ import (
 )
 
 type PathsModule struct {
-	httpx     *HTTPXModule
-	wordlist  []string
-	smartMode bool
+	httpx      HTTPXInterface
+	wordlist   []string
+	smartMode  bool
 	fpDetector *FalsePositiveDetector
+	useLibrary bool
+}
+
+// HTTPXInterface allows us to use either CLI or library version
+type HTTPXInterface interface {
+	ProbeBulk(urls []string) ([]*HTTPXResult, error)
 }
 
 //go:embed wordlists/common-paths.txt
@@ -25,19 +31,48 @@ func NewPathsModule(timeout time.Duration, smartMode bool, appConfig *config.Con
 	// Configure httpx settings
 	threads := 50
 	rateLimit := 100
-	
-	if appConfig != nil && appConfig.HTTPX.Threads > 0 {
-		threads = appConfig.HTTPX.Threads
+
+	if appConfig != nil {
+		httpxConfig := appConfig.GetDefaultHTTPXConfig()
+		if httpxConfig.Threads > 0 {
+			threads = httpxConfig.Threads
+		}
+		if httpxConfig.RateLimit > 0 {
+			rateLimit = httpxConfig.RateLimit
+		}
 	}
-	if appConfig != nil && appConfig.HTTPX.RateLimit > 0 {
-		rateLimit = appConfig.HTTPX.RateLimit
-	}
-	
+
 	return &PathsModule{
 		httpx:      NewHTTPXModule(threads, timeout, rateLimit),
 		wordlist:   loadWordlist(appConfig),
 		smartMode:  smartMode,
 		fpDetector: NewFalsePositiveDetector(timeout, rateLimit),
+		useLibrary: false,
+	}
+}
+
+// NewPathsModuleWithLibrary creates a paths module using httpx library instead of CLI
+func NewPathsModuleWithLibrary(timeout time.Duration, smartMode bool, appConfig *config.Config) *PathsModule {
+	// Configure httpx settings
+	threads := 50
+	rateLimit := 100
+
+	if appConfig != nil {
+		httpxConfig := appConfig.GetDefaultHTTPXConfig()
+		if httpxConfig.Threads > 0 {
+			threads = httpxConfig.Threads
+		}
+		if httpxConfig.RateLimit > 0 {
+			rateLimit = httpxConfig.RateLimit
+		}
+	}
+
+	return &PathsModule{
+		httpx:      NewHTTPXLibModule(threads, timeout, rateLimit),
+		wordlist:   loadWordlist(appConfig),
+		smartMode:  smartMode,
+		fpDetector: NewFalsePositiveDetector(timeout, rateLimit),
+		useLibrary: true,
 	}
 }
 
@@ -56,14 +91,14 @@ func (p *PathsModule) Discover(target types.Target) (*types.DiscoveryResult, err
 	}
 
 	baseURL := strings.TrimSuffix(target.URL, "/")
-	
+
 	// Generate baseline for false positive detection
 	err := p.fpDetector.GenerateBaseline(baseURL)
 	if err != nil {
 		// Continue without false positive detection if baseline generation fails
 		// This ensures the module still works even if baseline fails
 	}
-	
+
 	// Build URLs for all paths
 	var urls []string
 	for _, path := range p.wordlist {
@@ -90,7 +125,7 @@ func (p *PathsModule) Discover(target types.Target) (*types.DiscoveryResult, err
 				Source:      "paths-httpx",
 			}
 			result.Paths = append(result.Paths, path)
-			
+
 			// Extract path from URL
 			discoveredPath := p.extractPath(httpxResult.URL, baseURL)
 			endpoint := types.Endpoint{
@@ -106,7 +141,7 @@ func (p *PathsModule) Discover(target types.Target) (*types.DiscoveryResult, err
 	// Smart mode: generate variations based on discovered paths
 	if p.smartMode && len(result.Paths) > 0 {
 		variations := p.generateVariations(result.Paths, baseURL)
-		
+
 		// Probe variations using httpx bulk
 		varHttpxResults, err := p.httpx.ProbeBulk(variations)
 		if err == nil {
@@ -122,7 +157,7 @@ func (p *PathsModule) Discover(target types.Target) (*types.DiscoveryResult, err
 						Source:      "paths-variation",
 					}
 					result.Paths = append(result.Paths, path)
-					
+
 					// Add as endpoint too
 					parsedURL := p.extractPath(httpxResult.URL, baseURL)
 					endpoint := types.Endpoint{
@@ -139,14 +174,14 @@ func (p *PathsModule) Discover(target types.Target) (*types.DiscoveryResult, err
 
 	// Apply false positive filtering to the final results
 	filteredResult := p.fpDetector.FilterFalsePositives(baseURL, result)
-	
+
 	return filteredResult, nil
 }
 
 func (p *PathsModule) generateVariations(discoveredPaths []types.Path, baseURL string) []string {
 	var variations []string
 	pathsFound := make(map[string]bool)
-	
+
 	// Collect unique paths
 	for _, path := range discoveredPaths {
 		cleanPath := p.extractPath(path.URL, baseURL)
@@ -154,16 +189,16 @@ func (p *PathsModule) generateVariations(discoveredPaths []types.Path, baseURL s
 			pathsFound[cleanPath] = true
 		}
 	}
-	
+
 	// Generate smart variations based on found paths
 	for foundPath := range pathsFound {
 		basePath := strings.TrimSuffix(foundPath, "/")
 		baseURL := strings.TrimSuffix(baseURL, "/")
-		
+
 		// Extension variations
 		variations = append(variations,
 			baseURL+basePath+".json",
-			baseURL+basePath+".xml", 
+			baseURL+basePath+".xml",
 			baseURL+basePath+".txt",
 			baseURL+basePath+".html",
 			baseURL+basePath+".php",
@@ -171,7 +206,7 @@ func (p *PathsModule) generateVariations(discoveredPaths []types.Path, baseURL s
 			baseURL+basePath+".asp",
 			baseURL+basePath+".aspx",
 		)
-		
+
 		// Backup variations
 		variations = append(variations,
 			baseURL+basePath+".bak",
@@ -182,7 +217,7 @@ func (p *PathsModule) generateVariations(discoveredPaths []types.Path, baseURL s
 			baseURL+basePath+".save",
 			baseURL+basePath+".tmp",
 		)
-		
+
 		// Directory variations
 		if !strings.HasSuffix(basePath, "/") {
 			variations = append(variations,
@@ -196,17 +231,17 @@ func (p *PathsModule) generateVariations(discoveredPaths []types.Path, baseURL s
 				baseURL+basePath+"/backup",
 			)
 		}
-		
+
 		// Version variations
 		variations = append(variations,
 			baseURL+basePath+"v1",
-			baseURL+basePath+"v2", 
+			baseURL+basePath+"v2",
 			baseURL+basePath+"/v1",
 			baseURL+basePath+"/v2",
 			baseURL+basePath+"_v1",
 			baseURL+basePath+"_v2",
 		)
-		
+
 		// Common suffixes
 		variations = append(variations,
 			baseURL+basePath+"_test",
@@ -219,7 +254,7 @@ func (p *PathsModule) generateVariations(discoveredPaths []types.Path, baseURL s
 			baseURL+basePath+"-new",
 		)
 	}
-	
+
 	return p.deduplicateStrings(variations)
 }
 
@@ -237,20 +272,20 @@ func (p *PathsModule) extractPath(fullURL, baseURL string) string {
 func (p *PathsModule) deduplicateStrings(input []string) []string {
 	seen := make(map[string]bool)
 	var result []string
-	
+
 	for _, item := range input {
 		if !seen[item] {
 			seen[item] = true
 			result = append(result, item)
 		}
 	}
-	
+
 	return result
 }
 
 func loadWordlist(appConfig *config.Config) []string {
 	var wordlist []string
-	
+
 	// Try to load from custom wordlist path first
 	if appConfig != nil {
 		if customPath := appConfig.GetCustomWordlistPath(); customPath != "" {
@@ -268,7 +303,7 @@ func loadWordlist(appConfig *config.Config) []string {
 			}
 		}
 	}
-	
+
 	// Try to load from embedded wordlist
 	if data, err := wordlistFS.ReadFile("wordlists/common-paths.txt"); err == nil {
 		scanner := bufio.NewScanner(strings.NewReader(string(data)))
@@ -279,12 +314,12 @@ func loadWordlist(appConfig *config.Config) []string {
 			}
 		}
 	}
-	
+
 	// Fallback to default wordlist if file loading fails
 	if len(wordlist) == 0 {
 		wordlist = getDefaultWordlist()
 	}
-	
+
 	return wordlist
 }
 

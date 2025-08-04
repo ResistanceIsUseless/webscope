@@ -1,0 +1,202 @@
+# WebScope Configuration Example
+# Profiles for different scanning scenarios - similar to SubScope's approach
+
+profiles:
+  stealth:
+    description: "Stealth scanning with minimal footprint and low rate limits"
+    global_limit: 5
+    katana:
+      depth: 1
+      rate_limit: 5
+      timeout: 30
+      concurrency: 1
+      parallelism: 1
+      strategy: "breadth-first"
+      jsluice: false
+      form_extract: false
+      headless: false
+      body_read_size: 1048576  # 1MB
+      max_responses: 25
+    httpx:
+      threads: 5
+      rate_limit: 5
+      timeout: 15
+      retries: 1
+      follow_redirect: false
+      status_codes: ["200", "401", "403"]
+      max_redirects: 2
+      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      tech_detect: false
+      web_server: false
+    paths:
+      threads: 5
+      rate_limit: 5
+      timeout: 15
+      smart_mode: false
+      max_paths: 50
+    javascript:
+      enabled: false
+      advanced_mode: false
+      secret_detect: false
+      endpoint_extract: false
+    false_positive:
+      enabled: true
+      max_length_diff: 50
+      min_length_ratio: 0.98
+      similarity_threshold: 0.9
+      baseline_count: 3
+
+  normal:
+    description: "Balanced scanning with moderate performance and stealth"
+    global_limit: 20
+    katana:
+      depth: 2
+      rate_limit: 15
+      timeout: 25
+      concurrency: 3
+      parallelism: 3
+      strategy: "breadth-first"
+      jsluice: true
+      form_extract: true
+      headless: false
+      body_read_size: 2097152  # 2MB
+      max_responses: 100
+    httpx:
+      threads: 15
+      rate_limit: 15
+      timeout: 10
+      retries: 2
+      follow_redirect: true
+      status_codes: ["200", "201", "202", "204", "301", "302", "401", "403"]
+      max_redirects: 5
+      user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+      tech_detect: true
+      web_server: true
+    paths:
+      threads: 15
+      rate_limit: 15
+      timeout: 10
+      smart_mode: true
+      max_paths: 200
+    javascript:
+      enabled: true
+      advanced_mode: false
+      secret_detect: true
+      endpoint_extract: true
+    false_positive:
+      enabled: true
+      max_length_diff: 100
+      min_length_ratio: 0.95
+      similarity_threshold: 0.8
+      baseline_count: 5
+
+  aggressive:
+    description: "Fast and comprehensive scanning with maximum performance"
+    global_limit: 100
+    katana:
+      depth: 3
+      rate_limit: 50
+      timeout: 20
+      concurrency: 10
+      parallelism: 10
+      strategy: "depth-first"
+      jsluice: true
+      form_extract: true
+      headless: false
+      body_read_size: 10485760  # 10MB
+      max_responses: 500
+    httpx:
+      threads: 50
+      rate_limit: 50
+      timeout: 5
+      retries: 1
+      follow_redirect: true
+      status_codes: ["200", "201", "202", "203", "204", "205", "206", "207", "208", "226", "300", "301", "302", "303", "304", "305", "307", "308", "401", "403", "405"]
+      max_redirects: 10
+      user_agent: "WebScope/1.0"
+      tech_detect: true
+      web_server: true
+    paths:
+      threads: 50
+      rate_limit: 50
+      timeout: 5
+      smart_mode: true
+      max_paths: 1000
+    javascript:
+      enabled: true
+      advanced_mode: true
+      secret_detect: true
+      endpoint_extract: true
+    false_positive:
+      enabled: true
+      max_length_diff: 200
+      min_length_ratio: 0.9
+      similarity_threshold: 0.7
+      baseline_count: 10
+
+  thorough:
+    description: "Comprehensive deep scanning for maximum coverage"
+    global_limit: 30
+    katana:
+      depth: 4
+      rate_limit: 20
+      timeout: 60
+      concurrency: 8
+      parallelism: 8
+      strategy: "depth-first"
+      jsluice: true
+      form_extract: true
+      headless: true
+      body_read_size: 20971520  # 20MB
+      max_responses: 1000
+    httpx:
+      threads: 30
+      rate_limit: 20
+      timeout: 30
+      retries: 3
+      follow_redirect: true
+      status_codes: ["200", "201", "202", "203", "204", "205", "206", "207", "208", "226", "300", "301", "302", "303", "304", "305", "307", "308", "401", "403", "405", "500", "501", "502", "503"]
+      max_redirects: 15
+      user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+      tech_detect: true
+      web_server: true
+    paths:
+      threads: 30
+      rate_limit: 20
+      timeout: 30
+      smart_mode: true
+      max_paths: 2000
+    javascript:
+      enabled: true
+      advanced_mode: true
+      secret_detect: true
+      endpoint_extract: true
+    false_positive:
+      enabled: true
+      max_length_diff: 300
+      min_length_ratio: 0.85
+      similarity_threshold: 0.6
+      baseline_count: 15
+
+# Global configuration
+global:
+  wordlists:
+    common_paths: "common-paths.txt"
+  jsluice:
+    patterns:
+      urls:
+        - "window\\.location\\.href\\s*=\\s*[\"']([^\"']+)[\"']"
+        - "fetch\\([\"']([^\"']+)[\"']"
+        - "axios\\.\\w+\\([\"']([^\"']+)[\"']"
+        - "\\.ajax\\(\\{[^}]*url:\\s*[\"']([^\"']+)[\"']"
+      secrets:
+        - "(?i)(api[_-]?key|apikey)\\s*[:=]\\s*[\"']([a-zA-Z0-9_\\-]{20,})[\"']"
+        - "(?i)(secret[_-]?key|secretkey)\\s*[:=]\\s*[\"']([a-zA-Z0-9_\\-]{20,})[\"']"
+        - "(?i)bearer\\s+([a-zA-Z0-9_\\-\\.]+)"
+        - "(?i)(password|passwd|pwd)\\s*[:=]\\s*[\"']([^\"']{8,})[\"']"
+        - "(?i)(token)\\s*[:=]\\s*[\"']([a-zA-Z0-9_\\-\\.]{20,})[\"']"
+      endpoints:
+        - "\\/api\\/v\\d+\\/[\\w\\-\\/]+"
+        - "(?i)(graphql|rest|api)\\s*:\\s*[\"']([^\"']+)[\"']"
+        - "route\\([\"']([^\"']+)[\"']"
+        - "path\\s*:\\s*[\"'](\\/[^\"']+)[\"']"

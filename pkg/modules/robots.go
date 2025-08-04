@@ -24,14 +24,17 @@ func NewRobotsModule(timeout time.Duration) *RobotsModule {
 func NewRobotsModuleWithConfig(timeout time.Duration, appConfig *config.Config) *RobotsModule {
 	threads := 10
 	rateLimit := 10
-	
-	if appConfig != nil && appConfig.HTTPX.Threads > 0 {
-		threads = appConfig.HTTPX.Threads
+
+	if appConfig != nil {
+		httpxConfig := appConfig.GetDefaultHTTPXConfig()
+		if httpxConfig.Threads > 0 {
+			threads = httpxConfig.Threads
+		}
+		if httpxConfig.RateLimit > 0 {
+			rateLimit = httpxConfig.RateLimit
+		}
 	}
-	if appConfig != nil && appConfig.HTTPX.RateLimit > 0 {
-		rateLimit = appConfig.HTTPX.RateLimit
-	}
-	
+
 	return &RobotsModule{
 		httpx:      NewHTTPXModule(threads, timeout, rateLimit),
 		fpDetector: NewFalsePositiveDetector(timeout, rateLimit),
@@ -53,7 +56,7 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 	}
 
 	robotsURL := strings.TrimSuffix(target.URL, "/") + "/robots.txt"
-	
+
 	// Use httpx to check if robots.txt exists
 	httpxResult, err := r.httpx.probeTarget(robotsURL)
 	if err != nil || httpxResult == nil || httpxResult.StatusCode != 200 {
@@ -74,7 +77,7 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 	// Since we can't get the body content from httpx directly,
 	// we'll probe common disallowed paths that are typically in robots.txt
 	baseURL := strings.TrimSuffix(target.URL, "/")
-	
+
 	// Common paths found in robots.txt files
 	commonDisallowedPaths := []string{
 		"/admin", "/admin/",
@@ -136,7 +139,7 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 					Source:      "robots-common",
 				}
 				result.Paths = append(result.Paths, discoveredPath)
-				
+
 				// Extract path for endpoint
 				pathOnly := strings.TrimPrefix(httpxRes.URL, baseURL)
 				endpoint := types.Endpoint{
@@ -174,7 +177,7 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 					Source:      "robots-sitemap",
 				}
 				result.Paths = append(result.Paths, sitemapPath)
-				
+
 				// Add sitemap as endpoint
 				pathOnly := strings.TrimPrefix(httpxRes.URL, baseURL)
 				endpoint := types.Endpoint{
@@ -200,12 +203,12 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 func (r *RobotsModule) parseRobots(content string) ([]string, []string) {
 	var paths []string
 	var sitemaps []string
-	
+
 	scanner := bufio.NewScanner(strings.NewReader(content))
-	
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		if strings.HasPrefix(strings.ToLower(line), "disallow:") {
 			path := strings.TrimSpace(strings.TrimPrefix(line, "Disallow:"))
 			path = strings.TrimSpace(strings.TrimPrefix(path, "disallow:"))
@@ -226,20 +229,20 @@ func (r *RobotsModule) parseRobots(content string) ([]string, []string) {
 			}
 		}
 	}
-	
+
 	return r.deduplicateStrings(paths), r.deduplicateStrings(sitemaps)
 }
 
 func (r *RobotsModule) deduplicateStrings(input []string) []string {
 	seen := make(map[string]bool)
 	var result []string
-	
+
 	for _, item := range input {
 		if !seen[item] {
 			seen[item] = true
 			result = append(result, item)
 		}
 	}
-	
+
 	return result
 }

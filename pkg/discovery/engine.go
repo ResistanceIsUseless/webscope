@@ -20,6 +20,7 @@ type Config struct {
 	Modules   []string
 	Verbose   bool
 	AppConfig *appconfig.Config
+	Profile   string
 }
 
 type Engine struct {
@@ -88,65 +89,91 @@ func NewEngine(config *Config) *Engine {
 	for _, moduleName := range config.Modules {
 		switch moduleName {
 		case "httpx":
-			// Configure httpx module with settings from config
+			// Configure httpx module with settings from profile config
 			threads := 50
 			rateLimit := config.RateLimit
-			if config.AppConfig != nil && config.AppConfig.HTTPX.Threads > 0 {
-				threads = config.AppConfig.HTTPX.Threads
-			}
-			if config.AppConfig != nil && config.AppConfig.HTTPX.RateLimit > 0 {
-				rateLimit = config.AppConfig.HTTPX.RateLimit
+			if config.AppConfig != nil && config.Profile != "" {
+				httpxConfig := config.AppConfig.GetHTTPXConfig(config.Profile)
+				if httpxConfig.Threads > 0 {
+					threads = httpxConfig.Threads
+				}
+				if httpxConfig.RateLimit > 0 {
+					rateLimit = httpxConfig.RateLimit
+				}
 			}
 			engine.modules = append(engine.modules, modules.NewHTTPXModule(threads, config.Timeout, rateLimit))
 		case "httpx-lib":
 			// Use httpx as a library instead of CLI
 			threads := 50
 			rateLimit := config.RateLimit
-			if config.AppConfig != nil && config.AppConfig.HTTPX.Threads > 0 {
-				threads = config.AppConfig.HTTPX.Threads
-			}
-			if config.AppConfig != nil && config.AppConfig.HTTPX.RateLimit > 0 {
-				rateLimit = config.AppConfig.HTTPX.RateLimit
+			if config.AppConfig != nil && config.Profile != "" {
+				httpxConfig := config.AppConfig.GetHTTPXConfig(config.Profile)
+				if httpxConfig.Threads > 0 {
+					threads = httpxConfig.Threads
+				}
+				if httpxConfig.RateLimit > 0 {
+					rateLimit = httpxConfig.RateLimit
+				}
 			}
 			engine.modules = append(engine.modules, modules.NewHTTPXLibModule(threads, config.Timeout, rateLimit))
 		case "http":
 			// Deprecated: Use httpx module instead
 			engine.modules = append(engine.modules, modules.NewHTTPModule(config.Timeout))
 		case "robots":
-			engine.modules = append(engine.modules, modules.NewRobotsModule(config.Timeout))
+			engine.modules = append(engine.modules, modules.NewRobotsModuleWithConfig(config.Timeout, config.AppConfig))
 		case "paths":
 			engine.modules = append(engine.modules, modules.NewPathsModule(config.Timeout, true, config.AppConfig))
 		case "javascript", "js":
 			// Pass jsluice config to JavaScript module
 			var jsConfig *appconfig.JSluiceConfig
 			if config.AppConfig != nil {
-				jsConfig = &config.AppConfig.JSluice
+				jsConfig = &config.AppConfig.Global.JSluice
 			}
 			engine.modules = append(engine.modules, modules.NewJavaScriptModule(config.Timeout, jsConfig))
 		case "sitemap":
-			engine.modules = append(engine.modules, modules.NewSitemapModule(config.Timeout))
+			engine.modules = append(engine.modules, modules.NewSitemapModuleWithConfig(config.Timeout, config.AppConfig))
 		case "katana":
-			// Configure katana module with settings from config
+			// Configure katana module with settings from profile config
 			depth := 3
 			rateLimit := config.RateLimit
-			if config.AppConfig != nil && config.AppConfig.Katana.Depth > 0 {
-				depth = config.AppConfig.Katana.Depth
-			}
-			if config.AppConfig != nil && config.AppConfig.Katana.RateLimit > 0 {
-				rateLimit = config.AppConfig.Katana.RateLimit
+			if config.AppConfig != nil && config.Profile != "" {
+				katanaConfig := config.AppConfig.GetKatanaConfig(config.Profile)
+				if katanaConfig.Depth > 0 {
+					depth = katanaConfig.Depth
+				}
+				if katanaConfig.RateLimit > 0 {
+					rateLimit = katanaConfig.RateLimit
+				}
 			}
 			engine.modules = append(engine.modules, modules.NewKatanaModule(depth, config.Timeout, rateLimit))
 		case "katana-lib":
-			// Configure katana library module with settings from config
-			depth := 3
-			rateLimit := config.RateLimit
-			if config.AppConfig != nil && config.AppConfig.Katana.Depth > 0 {
-				depth = config.AppConfig.Katana.Depth
+			// Configure katana library module with profile settings
+			var katanaConfig appconfig.KatanaConfig
+			if config.Profile != "" && config.AppConfig != nil {
+				katanaConfig = config.AppConfig.GetKatanaConfig(config.Profile)
 			}
-			if config.AppConfig != nil && config.AppConfig.Katana.RateLimit > 0 {
-				rateLimit = config.AppConfig.Katana.RateLimit
+			
+			// Set defaults if config is empty
+			if katanaConfig.Depth == 0 {
+				katanaConfig.Depth = 2
 			}
-			engine.modules = append(engine.modules, modules.NewKatanaLibModule(depth, config.Timeout, rateLimit))
+			if katanaConfig.RateLimit == 0 {
+				katanaConfig.RateLimit = config.RateLimit
+			}
+			if katanaConfig.Timeout == 0 {
+				katanaConfig.Timeout = int(config.Timeout.Seconds())
+			}
+			if katanaConfig.Concurrency == 0 {
+				katanaConfig.Concurrency = 5
+			}
+			if katanaConfig.Parallelism == 0 {
+				katanaConfig.Parallelism = 5
+			}
+			if katanaConfig.Strategy == "" {
+				katanaConfig.Strategy = "breadth-first"
+			}
+			
+			engine.modules = append(engine.modules, modules.NewKatanaLibModuleWithConfig(katanaConfig, config.Timeout))
 		}
 	}
 

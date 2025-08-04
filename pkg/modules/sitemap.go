@@ -22,14 +22,17 @@ func NewSitemapModule(timeout time.Duration) *SitemapModule {
 func NewSitemapModuleWithConfig(timeout time.Duration, appConfig *config.Config) *SitemapModule {
 	threads := 20
 	rateLimit := 20
-	
-	if appConfig != nil && appConfig.HTTPX.Threads > 0 {
-		threads = appConfig.HTTPX.Threads
+
+	if appConfig != nil {
+		httpxConfig := appConfig.GetDefaultHTTPXConfig()
+		if httpxConfig.Threads > 0 {
+			threads = httpxConfig.Threads
+		}
+		if httpxConfig.RateLimit > 0 {
+			rateLimit = httpxConfig.RateLimit
+		}
 	}
-	if appConfig != nil && appConfig.HTTPX.RateLimit > 0 {
-		rateLimit = appConfig.HTTPX.RateLimit
-	}
-	
+
 	return &SitemapModule{
 		httpx: NewHTTPXModule(threads, timeout, rateLimit),
 	}
@@ -50,7 +53,7 @@ func (s *SitemapModule) Discover(target types.Target) (*types.DiscoveryResult, e
 	}
 
 	baseURL := strings.TrimSuffix(target.URL, "/")
-	
+
 	// Try common sitemap locations
 	sitemapURLs := []string{
 		baseURL + "/sitemap.xml",
@@ -93,10 +96,10 @@ func (s *SitemapModule) Discover(target types.Target) (*types.DiscoveryResult, e
 	for _, httpxResult := range httpxResults {
 		if httpxResult.StatusCode == 200 {
 			// Check if it's likely an XML sitemap based on content type
-			if strings.Contains(strings.ToLower(httpxResult.ContentType), "xml") || 
-			   strings.Contains(strings.ToLower(httpxResult.ContentType), "text/plain") ||
-			   strings.Contains(httpxResult.URL, ".xml") {
-				
+			if strings.Contains(strings.ToLower(httpxResult.ContentType), "xml") ||
+				strings.Contains(strings.ToLower(httpxResult.ContentType), "text/plain") ||
+				strings.Contains(httpxResult.URL, ".xml") {
+
 				// Add sitemap file itself as discovered path
 				sitemapPath := types.Path{
 					URL:         httpxResult.URL,
@@ -107,9 +110,9 @@ func (s *SitemapModule) Discover(target types.Target) (*types.DiscoveryResult, e
 					Source:      "sitemap-file",
 				}
 				result.Paths = append(result.Paths, sitemapPath)
-				
+
 				foundSitemaps = append(foundSitemaps, httpxResult.URL)
-				
+
 				// Add as endpoint
 				pathOnly := strings.TrimPrefix(httpxResult.URL, baseURL)
 				endpoint := types.Endpoint{
@@ -128,7 +131,7 @@ func (s *SitemapModule) Discover(target types.Target) (*types.DiscoveryResult, e
 	if len(foundSitemaps) > 0 {
 		// Generate common URL patterns found in sitemaps
 		commonPatterns := s.generateCommonSitemapURLs(baseURL)
-		
+
 		// Probe these URLs
 		patternResults, err := s.httpx.ProbeBulk(commonPatterns)
 		if err == nil {
@@ -144,7 +147,7 @@ func (s *SitemapModule) Discover(target types.Target) (*types.DiscoveryResult, e
 						Source:      "sitemap-pattern",
 					}
 					result.Paths = append(result.Paths, path)
-					
+
 					// Extract path for endpoint
 					pathOnly := strings.TrimPrefix(httpxResult.URL, baseURL)
 					endpoint := types.Endpoint{
@@ -164,7 +167,7 @@ func (s *SitemapModule) Discover(target types.Target) (*types.DiscoveryResult, e
 
 func (s *SitemapModule) generateCommonSitemapURLs(baseURL string) []string {
 	var urls []string
-	
+
 	// Common patterns found in sitemaps
 	patterns := []string{
 		"/about", "/about-us", "/about/",
@@ -205,11 +208,11 @@ func (s *SitemapModule) generateCommonSitemapURLs(baseURL string) []string {
 		"/tags", "/tags/",
 		"/archive", "/archive/", "/archives", "/archives/",
 	}
-	
+
 	// Generate full URLs
 	for _, pattern := range patterns {
 		urls = append(urls, baseURL+pattern)
-		
+
 		// Also try with common date patterns for blogs
 		if pattern == "/blog" || pattern == "/news" || pattern == "/archive" {
 			currentYear := time.Now().Year()
@@ -219,7 +222,7 @@ func (s *SitemapModule) generateCommonSitemapURLs(baseURL string) []string {
 			}
 		}
 	}
-	
+
 	// Add numbered pages
 	for i := 1; i <= 5; i++ {
 		urls = append(urls, fmt.Sprintf("%s/page/%d", baseURL, i))
@@ -228,6 +231,6 @@ func (s *SitemapModule) generateCommonSitemapURLs(baseURL string) []string {
 		urls = append(urls, fmt.Sprintf("%s/blog/page/%d", baseURL, i))
 		urls = append(urls, fmt.Sprintf("%s/blog/page/%d/", baseURL, i))
 	}
-	
+
 	return urls
 }
