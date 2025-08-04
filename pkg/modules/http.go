@@ -201,7 +201,7 @@ func (h *HTTPModule) discoverCommonPaths(target types.Target) []types.Path {
 
 	for _, path := range commonPaths {
 		url := strings.TrimSuffix(target.URL, "/") + path
-		
+
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
 			continue
@@ -239,72 +239,84 @@ func (h *HTTPModule) discoverCommonPaths(target types.Target) []types.Path {
 
 func (h *HTTPModule) extractForms(htmlContent, baseURL string) []types.Form {
 	var forms []types.Form
-	
+
 	// Find all form elements with more comprehensive regex
 	formRegex := regexp.MustCompile(`(?is)<form[^>]*>.*?</form>`)
 	actionRegex := regexp.MustCompile(`(?i)action=["']?([^"'\s>]+)["']?`)
 	methodRegex := regexp.MustCompile(`(?i)method=["']?([^"'\s>]+)["']?`)
-	
+
 	formMatches := formRegex.FindAllString(htmlContent, -1)
-	
+
 	for _, formHTML := range formMatches {
 		form := types.Form{
 			Action: "",
 			Method: "GET", // Default method
-			Inputs: []string{},
+			Inputs: []types.FormInput{},
 			Source: "http-form",
 		}
-		
+
 		// Extract action
 		if actionMatch := actionRegex.FindStringSubmatch(formHTML); len(actionMatch) > 1 {
 			form.Action = actionMatch[1]
 		}
-		
+
 		// Extract method
 		if methodMatch := methodRegex.FindStringSubmatch(formHTML); len(methodMatch) > 1 {
 			form.Method = strings.ToUpper(methodMatch[1])
 		}
-		
+
 		// Extract input names
 		inputMatches := h.inputRegex.FindAllStringSubmatch(formHTML, -1)
 		for _, inputMatch := range inputMatches {
 			if len(inputMatch) > 1 {
-				form.Inputs = append(form.Inputs, inputMatch[1])
+				formInput := types.FormInput{
+					Name: inputMatch[1],
+					Type: "text", // Default type
+				}
+				form.Inputs = append(form.Inputs, formInput)
 			}
 		}
-		
+
 		// Also check for textarea and select elements
 		textareaRegex := regexp.MustCompile(`(?i)<textarea[^>]*name=["']([^"']+)["'][^>]*>`)
 		selectRegex := regexp.MustCompile(`(?i)<select[^>]*name=["']([^"']+)["'][^>]*>`)
-		
+
 		textareaMatches := textareaRegex.FindAllStringSubmatch(formHTML, -1)
 		for _, match := range textareaMatches {
 			if len(match) > 1 {
-				form.Inputs = append(form.Inputs, match[1])
+				formInput := types.FormInput{
+					Name: match[1],
+					Type: "textarea",
+				}
+				form.Inputs = append(form.Inputs, formInput)
 			}
 		}
-		
+
 		selectMatches := selectRegex.FindAllStringSubmatch(formHTML, -1)
 		for _, match := range selectMatches {
 			if len(match) > 1 {
-				form.Inputs = append(form.Inputs, match[1])
+				formInput := types.FormInput{
+					Name: match[1],
+					Type: "select",
+				}
+				form.Inputs = append(form.Inputs, formInput)
 			}
 		}
-		
+
 		// Deduplicate inputs
-		form.Inputs = h.deduplicateStrings(form.Inputs)
-		
+		form.Inputs = h.deduplicateFormInputs(form.Inputs)
+
 		if len(form.Inputs) > 0 || form.Action != "" {
 			forms = append(forms, form)
 		}
 	}
-	
+
 	return forms
 }
 
 func (h *HTTPModule) extractParameters(url string) []types.Parameter {
 	var parameters []types.Parameter
-	
+
 	// Extract parameters from URL query string
 	paramMatches := h.paramRegex.FindAllStringSubmatch(url, -1)
 	for _, match := range paramMatches {
@@ -317,21 +329,36 @@ func (h *HTTPModule) extractParameters(url string) []types.Parameter {
 			parameters = append(parameters, param)
 		}
 	}
-	
+
 	return parameters
 }
 
 func (h *HTTPModule) deduplicateStrings(input []string) []string {
 	seen := make(map[string]bool)
 	var result []string
-	
+
 	for _, item := range input {
 		if !seen[item] && item != "" {
 			seen[item] = true
 			result = append(result, item)
 		}
 	}
-	
+
+	return result
+}
+
+func (h *HTTPModule) deduplicateFormInputs(input []types.FormInput) []types.FormInput {
+	seen := make(map[string]bool)
+	var result []types.FormInput
+
+	for _, item := range input {
+		key := item.Name + ":" + item.Type
+		if !seen[key] && item.Name != "" {
+			seen[key] = true
+			result = append(result, item)
+		}
+	}
+
 	return result
 }
 
@@ -339,13 +366,13 @@ func (h *HTTPModule) analyzeSecurityHeaders(resp *http.Response) []types.Technol
 	var technologies []types.Technology
 
 	securityHeaders := map[string]string{
-		"Content-Security-Policy":   "CSP",
-		"X-Content-Type-Options":    "Content-Type Protection",
-		"X-Frame-Options":           "Clickjacking Protection", 
-		"X-XSS-Protection":          "XSS Protection",
-		"Strict-Transport-Security": "HSTS",
-		"Referrer-Policy":           "Referrer Policy",
-		"Permissions-Policy":        "Permissions Policy",
+		"Content-Security-Policy":      "CSP",
+		"X-Content-Type-Options":       "Content-Type Protection",
+		"X-Frame-Options":              "Clickjacking Protection",
+		"X-XSS-Protection":             "XSS Protection",
+		"Strict-Transport-Security":    "HSTS",
+		"Referrer-Policy":              "Referrer Policy",
+		"Permissions-Policy":           "Permissions Policy",
 		"Cross-Origin-Embedder-Policy": "COEP",
 		"Cross-Origin-Opener-Policy":   "COOP",
 		"Cross-Origin-Resource-Policy": "CORP",
@@ -366,7 +393,7 @@ func (h *HTTPModule) analyzeSecurityHeaders(resp *http.Response) []types.Technol
 	// Check for missing security headers (potential issues)
 	missingHeaders := []string{
 		"Content-Security-Policy",
-		"X-Content-Type-Options", 
+		"X-Content-Type-Options",
 		"X-Frame-Options",
 		"Strict-Transport-Security",
 	}
@@ -397,7 +424,7 @@ func (h *HTTPModule) analyzeSecurityHeaders(resp *http.Response) []types.Technol
 		if corsOrigin == "*" {
 			tech := types.Technology{
 				Name:     "Permissive CORS",
-				Category: "Security Issue", 
+				Category: "Security Issue",
 				Version:  "wildcard-origin",
 				Source:   "http-cors-analysis",
 			}

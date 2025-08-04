@@ -98,6 +98,17 @@ func NewEngine(config *Config) *Engine {
 				rateLimit = config.AppConfig.HTTPX.RateLimit
 			}
 			engine.modules = append(engine.modules, modules.NewHTTPXModule(threads, config.Timeout, rateLimit))
+		case "httpx-lib":
+			// Use httpx as a library instead of CLI
+			threads := 50
+			rateLimit := config.RateLimit
+			if config.AppConfig != nil && config.AppConfig.HTTPX.Threads > 0 {
+				threads = config.AppConfig.HTTPX.Threads
+			}
+			if config.AppConfig != nil && config.AppConfig.HTTPX.RateLimit > 0 {
+				rateLimit = config.AppConfig.HTTPX.RateLimit
+			}
+			engine.modules = append(engine.modules, modules.NewHTTPXLibModule(threads, config.Timeout, rateLimit))
 		case "http":
 			// Deprecated: Use httpx module instead
 			engine.modules = append(engine.modules, modules.NewHTTPModule(config.Timeout))
@@ -125,6 +136,17 @@ func NewEngine(config *Config) *Engine {
 				rateLimit = config.AppConfig.Katana.RateLimit
 			}
 			engine.modules = append(engine.modules, modules.NewKatanaModule(depth, config.Timeout, rateLimit))
+		case "katana-lib":
+			// Configure katana library module with settings from config
+			depth := 3
+			rateLimit := config.RateLimit
+			if config.AppConfig != nil && config.AppConfig.Katana.Depth > 0 {
+				depth = config.AppConfig.Katana.Depth
+			}
+			if config.AppConfig != nil && config.AppConfig.Katana.RateLimit > 0 {
+				rateLimit = config.AppConfig.Katana.RateLimit
+			}
+			engine.modules = append(engine.modules, modules.NewKatanaLibModule(depth, config.Timeout, rateLimit))
 		}
 	}
 
@@ -133,19 +155,19 @@ func NewEngine(config *Config) *Engine {
 
 func (e *Engine) Discover(ctx context.Context, targets []types.Target) <-chan types.EngineResult {
 	results := make(chan types.EngineResult, len(targets))
-	
+
 	e.totalCount = int64(len(targets))
 	e.startTime = time.Now()
 	atomic.StoreInt64(&e.processedCount, 0)
-	
+
 	if e.config.Verbose {
 		fmt.Fprintf(os.Stderr, "[*] Starting discovery for %d targets with %d workers\n", len(targets), e.config.Workers)
-		
+
 		// Progress ticker
 		go func() {
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
-			
+
 			for {
 				select {
 				case <-ticker.C:
@@ -153,7 +175,7 @@ func (e *Engine) Discover(ctx context.Context, targets []types.Target) <-chan ty
 					elapsed := time.Since(e.startTime)
 					rate := float64(processed) / elapsed.Seconds()
 					remaining := e.totalCount - processed
-					
+
 					if processed > 0 && rate > 0 {
 						eta := time.Duration(float64(remaining) / rate * float64(time.Second))
 						fmt.Fprintf(os.Stderr, "[*] Progress: %d/%d targets (%.1f%%) - Rate: %.1f/s - ETA: %s\n",
@@ -172,7 +194,7 @@ func (e *Engine) Discover(ctx context.Context, targets []types.Target) <-chan ty
 			}
 		}()
 	}
-	
+
 	var wg sync.WaitGroup
 	targetChan := make(chan types.Target, len(targets))
 
@@ -199,7 +221,7 @@ func (e *Engine) Discover(ctx context.Context, targets []types.Target) <-chan ty
 		wg.Wait()
 		close(results)
 		e.rateLimiter.Stop()
-		
+
 		if e.config.Verbose {
 			processed := atomic.LoadInt64(&e.processedCount)
 			elapsed := time.Since(e.startTime)
@@ -217,15 +239,15 @@ func (e *Engine) worker(ctx context.Context, workerID int, targets <-chan types.
 			if !ok {
 				return
 			}
-			
+
 			if e.config.Verbose {
 				fmt.Fprintf(os.Stderr, "[Worker %d] Processing: %s\n", workerID, target.URL)
 			}
-			
+
 			result := e.processTarget(ctx, target)
-			
+
 			atomic.AddInt64(&e.processedCount, 1)
-			
+
 			if e.config.Verbose {
 				if result.Error != nil {
 					fmt.Fprintf(os.Stderr, "[Worker %d] Error on %s: %v\n", workerID, target.URL, result.Error)
@@ -233,18 +255,18 @@ func (e *Engine) worker(ctx context.Context, workerID int, targets <-chan types.
 					paths := len(result.Discovery.Paths)
 					endpoints := len(result.Discovery.Endpoints)
 					if paths > 0 || endpoints > 0 {
-						fmt.Fprintf(os.Stderr, "[Worker %d] Found on %s: %d paths, %d endpoints\n", 
+						fmt.Fprintf(os.Stderr, "[Worker %d] Found on %s: %d paths, %d endpoints\n",
 							workerID, target.URL, paths, endpoints)
 					}
 				}
 			}
-			
+
 			select {
 			case results <- result:
 			case <-ctx.Done():
 				return
 			}
-			
+
 		case <-ctx.Done():
 			return
 		}
