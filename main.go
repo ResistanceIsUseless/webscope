@@ -41,8 +41,9 @@ func showUsage() {
 	fmt.Printf("   -im, -input-mode string mode of input file (list, nmap, json) (default \"list\")\n\n")
 	
 	fmt.Printf("OUTPUT:\n")
-	fmt.Printf("   -o, -output string      output file to write results (default stdout)\n")
-	fmt.Printf("   -of, -output-format string output format (jsonl, json) (default \"jsonl\")\n\n")
+	fmt.Printf("   -o, -output string      output file to write results (default stdout, simple mode)\n")
+	fmt.Printf("   -of, -output-format string output format (jsonl, json) (default \"jsonl\")\n")
+	fmt.Printf("                          Note: simple mode outputs findings only, one per line for piping\n\n")
 	
 	fmt.Printf("CONFIGURATION:\n")
 	fmt.Printf("   -c, -config string      path to configuration file\n")
