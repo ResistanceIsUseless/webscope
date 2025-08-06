@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	appVersion = "1.0.0"
+	appVersion = "1.0.1"
 )
 
 func showBanner() {
