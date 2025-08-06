@@ -1,5 +1,9 @@
 # WebScope
 
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/ResistanceIsUseless/webscope/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/resistanceisuseless/webscope)](https://goreportcard.com/report/github.com/resistanceisuseless/webscope)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 WebScope is a **static web content analysis tool** designed for security researchers and penetration testers. It performs deep analysis of known web targets through static techniques including path bruteforcing, JavaScript analysis, and historical data mining. WebScope complements active crawling tools like Katana by focusing on **static analysis** rather than dynamic crawling.
 
 ## Features

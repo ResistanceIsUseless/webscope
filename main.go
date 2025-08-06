@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,21 +17,133 @@ import (
 	"github.com/resistanceisuseless/webscope/pkg/output"
 )
 
+const (
+	appVersion = "1.0.0"
+)
+
+func showBanner() {
+	fmt.Printf("WebScope - Web Content Discovery Tool v%s\n", appVersion)
+	fmt.Printf("https://github.com/ResistanceIsUseless/webscope\n\n")
+}
+
+func showUsage() {
+	fmt.Printf("Usage:\n")
+	fmt.Printf("  webscope [flags]\n\n")
+	
+	fmt.Printf("FLAGS:\n")
+	fmt.Printf("INPUT:\n")
+	fmt.Printf("   -l, -list string[]      path to file containing a list of target URLs/hosts to scan (one per line)\n")
+	fmt.Printf("   -u, -target string[]    target URLs/hosts to scan\n")
+	fmt.Printf("   -resume string          resume scan using resume.cfg\n\n")
+	
+	fmt.Printf("INPUT-FORMAT:\n")
+	fmt.Printf("   -im, -input-mode string mode of input file (list, nmap, json) (default \"list\")\n\n")
+	
+	fmt.Printf("OUTPUT:\n")
+	fmt.Printf("   -o, -output string      output file to write results (default stdout)\n")
+	fmt.Printf("   -of, -output-format string output format (jsonl, json) (default \"jsonl\")\n\n")
+	
+	fmt.Printf("CONFIGURATION:\n")
+	fmt.Printf("   -c, -config string      path to configuration file\n")
+	fmt.Printf("   -profile string         scanning profile to use (stealth, normal, aggressive, thorough) (default \"normal\")\n")
+	fmt.Printf("   -lp, -list-profiles     list available scanning profiles\n\n")
+	
+	fmt.Printf("RATE-CONTROL:\n")
+	fmt.Printf("   -t, -threads int        number of concurrent threads (default 20)\n")
+	fmt.Printf("   -rl, -rate-limit int    maximum number of requests to send per second (default 20)\n")
+	fmt.Printf("   -timeout int            time to wait in seconds before timeout (default 30)\n\n")
+	
+	fmt.Printf("MODULES:\n")
+	fmt.Printf("   -m, -modules string[]   discovery modules to run (default \"httpx-lib,robots,paths\")\n")
+	fmt.Printf("                          Available: httpx-lib,robots,paths,javascript,advanced-javascript,patterns\n\n")
+	
+	fmt.Printf("DEBUG:\n")
+	fmt.Printf("   -v, -verbose           show verbose output\n")
+	fmt.Printf("   -debug                 show debug output\n")
+	fmt.Printf("   -s, -silent            show only results in output\n")
+	fmt.Printf("   -version               show version of the project\n")
+}
+
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringSliceFlag) Set(value string) error {
+	*s = append(*s, strings.Split(value, ",")...)
+	return nil
+}
+
 func main() {
 	var (
-		inputFile    = flag.String("i", "", "Input file (nmap XML, JSON, or text file with one host per line)")
-		outputFile   = flag.String("o", "", "Output file (default: stdout)")
-		outputFormat = flag.String("of", "jsonl", "Output format: jsonl (streaming JSON Lines) or json (standard JSON)")
-		configFile   = flag.String("c", "", "Configuration file path (default: auto-detect)")
-		profile      = flag.String("profile", "normal", "Scanning profile (stealth, normal, aggressive, thorough)")
-		workers      = flag.Int("w", 0, "Number of worker threads (0 = use profile default)")
-		timeout      = flag.Duration("t", 0, "HTTP timeout (0 = use profile default)")
-		rateLimit    = flag.Int("r", 0, "Requests per second (0 = use profile default)")
-		modules      = flag.String("m", "httpx-lib,robots,paths", "Discovery modules to use (comma-separated)")
-		listProfiles = flag.Bool("list-profiles", false, "List available profiles and exit")
-		verbose      = flag.Bool("v", false, "Verbose output")
+		// Input flags
+		targets     stringSliceFlag
+		inputFiles  stringSliceFlag
+		inputMode   = flag.String("input-mode", "list", "")
+		
+		// Output flags
+		outputFile   = flag.String("o", "", "")
+		outputFmt    = flag.String("of", "jsonl", "")
+		
+		// Configuration flags
+		configFile   = flag.String("c", "", "")
+		profile      = flag.String("profile", "normal", "")
+		listProfiles = flag.Bool("list-profiles", false, "")
+		
+		// Rate control flags
+		threads     = flag.Int("t", 20, "")
+		rateLimit   = flag.Int("rl", 20, "")
+		timeout     = flag.Int("timeout", 30, "")
+		
+		// Module flags
+		modules     stringSliceFlag
+		
+		// Debug flags
+		verbose     = flag.Bool("v", false, "")
+		silent      = flag.Bool("s", false, "")
+		version     = flag.Bool("version", false, "")
+		showHelp    = flag.Bool("h", false, "")
 	)
+	
+	// Set up aliases
+	flag.StringVar(outputFile, "output", "", "")
+	flag.StringVar(outputFmt, "output-format", "jsonl", "")
+	flag.StringVar(configFile, "config", "", "")
+	flag.IntVar(threads, "threads", 20, "")
+	flag.IntVar(rateLimit, "rate-limit", 20, "")
+	flag.BoolVar(verbose, "verbose", false, "")
+	flag.BoolVar(silent, "silent", false, "")
+	flag.BoolVar(listProfiles, "lp", false, "")
+	flag.StringVar(inputMode, "im", "list", "")
+	flag.Var(&targets, "u", "")
+	flag.Var(&targets, "target", "")
+	flag.Var(&inputFiles, "l", "")
+	flag.Var(&inputFiles, "list", "")
+	flag.Var(&modules, "m", "")
+	flag.Var(&modules, "modules", "")
+	
+	// Default modules if none specified
+	if len(modules) == 0 {
+		modules = stringSliceFlag{"httpx-lib", "robots", "paths"}
+	}
+	
+	flag.Usage = func() {
+		showBanner()
+		showUsage()
+	}
+	
 	flag.Parse()
+	
+	if *showHelp {
+		flag.Usage()
+		return
+	}
+	
+	if *version {
+		fmt.Printf("webscope version %s\n", appVersion)
+		return
+	}
 
 	ctx := context.Background()
 
@@ -45,7 +156,8 @@ func main() {
 		var err error
 		appConfig, err = config.Load(*configFile)
 		if err != nil {
-			log.Fatalf("Error loading config file: %v", err)
+			fmt.Fprintf(os.Stderr, "[ERROR] Error loading config file: %v\n", err)
+			os.Exit(1)
 		}
 		configLoaded = true
 		configPath = *configFile
@@ -63,111 +175,129 @@ func main() {
 		}
 	}
 
-	// Always inform about config status
-	if configLoaded {
-		fmt.Fprintf(os.Stderr, "[*] Loaded config from: %s\n", configPath)
-	} else {
-		if appConfig == nil {
-			appConfig = &config.Config{}
-		}
-		fmt.Fprintf(os.Stderr, "[*] No config file loaded, using defaults\n")
+	// Always initialize config if not loaded
+	if appConfig == nil {
+		appConfig = &config.Config{}
 	}
 
-	var inputReader io.Reader
-	if *inputFile != "" {
-		file, err := os.Open(*inputFile)
-		if err != nil {
-			log.Fatalf("Error opening input file: %v", err)
+	// Always inform about config status unless silent
+	if !*silent {
+		if configLoaded {
+			fmt.Fprintf(os.Stderr, "[INFO] Loaded config from: %s\n", configPath)
+		} else {
+			fmt.Fprintf(os.Stderr, "[INFO] No config file loaded, using defaults\n")
 		}
-		defer file.Close()
-		inputReader = file
-	} else {
-		inputReader = os.Stdin
-	}
-
-	inputHandler := input.NewHandler()
-	targets, err := inputHandler.ParseInput(inputReader, *inputFile)
-	if err != nil {
-		log.Fatalf("Error parsing input: %v", err)
 	}
 
 	// Handle profile listing
 	if *listProfiles {
-		fmt.Fprintf(os.Stderr, "Available Scanning Profiles:\n\n")
+		fmt.Printf("Available Scanning Profiles:\n\n")
 		
 		profiles := appConfig.GetProfiles()
 		if len(profiles) > 0 {
 			for _, profileName := range profiles {
 				if profileConfig, exists := appConfig.GetProfile(profileName); exists {
-					fmt.Fprintf(os.Stderr, "  %s: %s\n", profileName, profileConfig.Description)
+					fmt.Printf("  %s: %s\n", profileName, profileConfig.Description)
 				}
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "No profiles configured. Use config.example.yaml as a template.\n")
-			fmt.Fprintf(os.Stderr, "Default profiles: stealth, normal, aggressive, thorough\n")
+			fmt.Printf("No profiles configured. Use config.example.yaml as a template.\n")
+			fmt.Printf("Default profiles: stealth, normal, aggressive, thorough\n")
 		}
-		os.Exit(0)
+		return
 	}
 
-	// Always show target count
-	fmt.Fprintf(os.Stderr, "[*] Loaded %d targets\n", len(targets))
+	// Determine input source
+	var inputReader io.Reader
+	var inputFile string
+	
+	if len(targets) > 0 {
+		// Create temporary input from targets
+		inputReader = strings.NewReader(strings.Join(targets, "\n"))
+		inputFile = ""
+	} else if len(inputFiles) > 0 {
+		// Use first file from list
+		file, err := os.Open(inputFiles[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Error opening input file: %v\n", err)
+			os.Exit(1)
+		}
+		defer file.Close()
+		inputReader = file
+		inputFile = inputFiles[0]
+	} else {
+		// Default to stdin if no input specified
+		inputReader = os.Stdin
+		inputFile = ""
+	}
 
-	if len(targets) == 0 {
+	inputHandler := input.NewHandler()
+	parsedTargets, err := inputHandler.ParseInput(inputReader, inputFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Error parsing input: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Always show target count unless silent
+	if !*silent {
+		fmt.Fprintf(os.Stderr, "[INFO] Loaded %d targets\n", len(parsedTargets))
+	}
+
+	if len(parsedTargets) == 0 {
 		fmt.Fprintf(os.Stderr, "No targets found. Usage examples:\n")
 		fmt.Fprintf(os.Stderr, "  echo 'https://example.com' | webscope\n")
 		fmt.Fprintf(os.Stderr, "  echo 'example.com:443' | webscope\n")
-		fmt.Fprintf(os.Stderr, "  webscope -i targets.txt\n")
-		fmt.Fprintf(os.Stderr, "  webscope -i nmap_results.xml\n")
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "  webscope -l targets.txt\n")
+		fmt.Fprintf(os.Stderr, "  webscope -u https://example.com\n")
+		fmt.Fprintf(os.Stderr, "  webscope -l nmap_results.xml\n")
+		return
 	}
 
 	// Get the selected profile configuration
 	selectedProfile, profileExists := appConfig.GetProfile(*profile)
 	if !profileExists && *profile != "normal" {
-		fmt.Fprintf(os.Stderr, "[!] Profile '%s' not found, using defaults\n", *profile)
+		if !*silent {
+			fmt.Fprintf(os.Stderr, "[WARN] Profile '%s' not found, using defaults\n", *profile)
+		}
 	}
 
 	// Use profile settings or CLI overrides
-	finalWorkers := *workers
-	if finalWorkers == 0 && profileExists {
-		finalWorkers = selectedProfile.GlobalLimit
-	}
-	if finalWorkers == 0 {
-		finalWorkers = 20 // Default fallback
+	finalWorkers := *threads
+	if profileExists && finalWorkers == 20 { // default value
+		if selectedProfile.GlobalLimit > 0 {
+			finalWorkers = selectedProfile.GlobalLimit
+		}
 	}
 
-	finalTimeout := *timeout
-	if finalTimeout == 0 && profileExists {
+	finalTimeout := time.Duration(*timeout) * time.Second
+	if profileExists && *timeout == 30 { // default value
 		if selectedProfile.HTTPX.Timeout > 0 {
 			finalTimeout = time.Duration(selectedProfile.HTTPX.Timeout) * time.Second
 		}
 	}
-	if finalTimeout == 0 {
-		finalTimeout = 30 * time.Second // Default fallback
-	}
 
 	finalRateLimit := *rateLimit
-	if finalRateLimit == 0 && profileExists {
-		finalRateLimit = selectedProfile.GlobalLimit
-	}
-	if finalRateLimit == 0 {
-		finalRateLimit = 20 // Default fallback
+	if profileExists && finalRateLimit == 20 { // default value
+		if selectedProfile.GlobalLimit > 0 {
+			finalRateLimit = selectedProfile.GlobalLimit
+		}
 	}
 
 	discoveryConfig := &discovery.Config{
 		Workers:   finalWorkers,
 		Timeout:   finalTimeout,
 		RateLimit: finalRateLimit,
-		Modules:   strings.Split(*modules, ","),
+		Modules:   []string(modules),
 		Verbose:   *verbose,
 		AppConfig: appConfig,
 		Profile:   *profile,
 	}
 
 	// Create streaming writer
-	streamWriter, err := output.NewStreamingWriter(*outputFile, *outputFormat)
+	streamWriter, err := output.NewStreamingWriter(*outputFile, *outputFmt)
 	if err != nil {
-		log.Fatalf("Error creating output writer: %v", err)
+		fmt.Fprintf(os.Stderr, "[ERROR] Error creating output writer: %v\n", err)
+		os.Exit(1)
 	}
 	defer streamWriter.Close()
 
@@ -182,73 +312,81 @@ func main() {
 	// Handle signals
 	go func() {
 		<-sigChan
-		fmt.Fprintf(os.Stderr, "\n[!] Received interrupt signal, saving partial results...\n")
+		if !*silent {
+			fmt.Fprintf(os.Stderr, "\n[WARN] Received interrupt signal, saving partial results...\n")
+		}
 		cancel()
 	}()
 
 	// Show discovery start
-	fmt.Fprintf(os.Stderr, "[*] Starting discovery with modules: %s\n", *modules)
-	fmt.Fprintf(os.Stderr, "[*] Workers: %d, Rate limit: %d/s, Timeout: %s\n", *workers, *rateLimit, *timeout)
+	if !*silent {
+		fmt.Fprintf(os.Stderr, "[INFO] Starting discovery with modules: %s\n", strings.Join(modules, ","))
+		fmt.Fprintf(os.Stderr, "[INFO] Workers: %d, Rate limit: %d/s, Timeout: %s\n", finalWorkers, finalRateLimit, finalTimeout)
+	}
 
 	engine := discovery.NewEngine(discoveryConfig)
-	results := engine.Discover(ctx, targets)
+	results := engine.Discover(ctx, parsedTargets)
 
 	// Simple progress counter for non-verbose mode
 	processedCount := 0
 	lastProgressTime := time.Now()
 
 	// Show initial progress
-	fmt.Fprintf(os.Stderr, "[*] Processing targets...\n")
+	if !*silent {
+		fmt.Fprintf(os.Stderr, "[INFO] Processing targets...\n")
+	}
 
 	for result := range results {
 		processedCount++
 
 		// Show basic progress every 10 seconds in non-verbose mode
-		if !*verbose && time.Since(lastProgressTime) > 10*time.Second {
-			fmt.Fprintf(os.Stderr, "[*] Progress: %d/%d targets processed...\n", processedCount, len(targets))
+		if !*verbose && !*silent && time.Since(lastProgressTime) > 10*time.Second {
+			fmt.Fprintf(os.Stderr, "[INFO] Progress: %d/%d targets processed...\n", processedCount, len(parsedTargets))
 			lastProgressTime = time.Now()
 		}
 
 		if result.Error != nil {
 			if *verbose {
-				fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", result.Target.URL, result.Error)
+				fmt.Fprintf(os.Stderr, "[ERROR] Error processing %s: %v\n", result.Target.URL, result.Error)
 			}
 			continue
 		}
 
 		// Write result immediately to prevent data loss
 		if err := streamWriter.WriteResult(result); err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing result for %s: %v\n", result.Target.Domain, err)
+			fmt.Fprintf(os.Stderr, "[ERROR] Error writing result for %s: %v\n", result.Target.Domain, err)
 		}
 	}
 
 	// Get final statistics
 	stats := streamWriter.GetStatistics()
 
-	// Always show completion status
-	fmt.Fprintf(os.Stderr, "[*] Discovery complete: %d targets processed\n", processedCount)
-	fmt.Fprintf(os.Stderr, "[*] Results: %d paths, %d endpoints, %d secrets, %d findings discovered\n",
-		stats.TotalPaths, stats.TotalEndpoints, stats.TotalSecrets, stats.TotalFindings)
-	
-	// Show findings summary if we have interesting findings
-	if stats.TotalFindings > 0 {
-		fmt.Fprintf(os.Stderr, "[*] Interesting findings summary:\n")
-		if len(stats.CriticalFindings) > 0 {
-			fmt.Fprintf(os.Stderr, "  - Critical: %d findings (requires immediate attention)\n", len(stats.CriticalFindings))
-		}
-		if len(stats.HighPriorityFindings) > 0 {
-			fmt.Fprintf(os.Stderr, "  - High priority: %d findings (review recommended)\n", len(stats.HighPriorityFindings))
-		}
-		if stats.FindingsByCategory != nil {
-			for category, count := range stats.FindingsByCategory {
-				if category == "secrets" || category == "serialization" {
-					fmt.Fprintf(os.Stderr, "  - %s: %d findings\n", category, count)
+	// Always show completion status unless silent
+	if !*silent {
+		fmt.Fprintf(os.Stderr, "[INFO] Discovery complete: %d targets processed\n", processedCount)
+		fmt.Fprintf(os.Stderr, "[INFO] Results: %d paths, %d endpoints, %d secrets, %d findings discovered\n",
+			stats.TotalPaths, stats.TotalEndpoints, stats.TotalSecrets, stats.TotalFindings)
+		
+		// Show findings summary if we have interesting findings
+		if stats.TotalFindings > 0 {
+			fmt.Fprintf(os.Stderr, "[INFO] Interesting findings summary:\n")
+			if len(stats.CriticalFindings) > 0 {
+				fmt.Fprintf(os.Stderr, "[WARN]   - Critical: %d findings (requires immediate attention)\n", len(stats.CriticalFindings))
+			}
+			if len(stats.HighPriorityFindings) > 0 {
+				fmt.Fprintf(os.Stderr, "[INFO]   - High priority: %d findings (review recommended)\n", len(stats.HighPriorityFindings))
+			}
+			if stats.FindingsByCategory != nil {
+				for category, count := range stats.FindingsByCategory {
+					if category == "secrets" || category == "serialization" {
+						fmt.Fprintf(os.Stderr, "[INFO]   - %s: %d findings\n", category, count)
+					}
 				}
 			}
 		}
-	}
 
-	if *outputFile != "" {
-		fmt.Fprintf(os.Stderr, "[*] Output saved to: %s\n", *outputFile)
+		if *outputFile != "" {
+			fmt.Fprintf(os.Stderr, "[INFO] Output saved to: %s\n", *outputFile)
+		}
 	}
 }
