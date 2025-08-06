@@ -1,8 +1,10 @@
 package modules
 
 import (
+	"context"
 	"fmt"
-	"math"
+	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/projectdiscovery/katana/pkg/engine/standard"
 	"github.com/projectdiscovery/katana/pkg/output"
 	"github.com/projectdiscovery/katana/pkg/types"
+	"github.com/resistanceisuseless/webscope/pkg/config"
 	wsTypes "github.com/resistanceisuseless/webscope/pkg/types"
 )
 
@@ -29,15 +32,61 @@ type KatanaLibModule struct {
 
 func NewKatanaLibModule(depth int, timeout time.Duration, rateLimit int) *KatanaLibModule {
 	return &KatanaLibModule{
-		depth:       depth,
+		depth:       2, // Reduce depth for faster crawling by default
 		timeout:     timeout,
 		rateLimit:   rateLimit,
-		concurrency: 10,
-		parallelism: 10,
+		concurrency: 5, // Reduce concurrency for cleaner output
+		parallelism: 5,
 		jsluice:     true,
 		formExtract: true,
 		headless:    false, // Use standard mode by default for better performance
-		strategy:    "depth-first",
+		strategy:    "breadth-first", // Breadth-first is often more efficient for basic discovery
+	}
+}
+
+// NewKatanaLibModuleWithConfig creates a new katana library module with custom configuration
+func NewKatanaLibModuleWithConfig(cfg config.KatanaConfig, fallbackTimeout time.Duration) *KatanaLibModule {
+	timeout := fallbackTimeout
+	if cfg.Timeout > 0 {
+		timeout = time.Duration(cfg.Timeout) * time.Second
+	}
+	
+	// Set defaults for missing values
+	depth := cfg.Depth
+	if depth == 0 {
+		depth = 2
+	}
+	
+	rateLimit := cfg.RateLimit
+	if rateLimit == 0 {
+		rateLimit = 20
+	}
+	
+	concurrency := cfg.Concurrency
+	if concurrency == 0 {
+		concurrency = 5
+	}
+	
+	parallelism := cfg.Parallelism
+	if parallelism == 0 {
+		parallelism = 5
+	}
+	
+	strategy := cfg.Strategy
+	if strategy == "" {
+		strategy = "breadth-first"
+	}
+	
+	return &KatanaLibModule{
+		depth:       depth,
+		timeout:     timeout,
+		rateLimit:   rateLimit,
+		concurrency: concurrency,
+		parallelism: parallelism,
+		jsluice:     cfg.JSluice,
+		formExtract: cfg.FormExtract,
+		headless:    cfg.Headless,
+		strategy:    strategy,
 	}
 }
 
@@ -67,15 +116,15 @@ func (k *KatanaLibModule) Discover(target wsTypes.Target) (*wsTypes.DiscoveryRes
 
 	// Configure katana options
 	options := &types.Options{
-		MaxDepth:        k.depth,
+		MaxDepth:        1, // Very conservative depth for faster results
 		FieldScope:      "rdn", // Restrict to registered domain name
-		BodyReadSize:    math.MaxInt,
-		Timeout:         int(k.timeout.Seconds()),
-		Concurrency:     k.concurrency,
-		Parallelism:     k.parallelism,
+		BodyReadSize:    1024 * 1024, // 1MB limit for faster processing
+		Timeout:         10, // 10 second timeout
+		Concurrency:     3,  // Lower concurrency
+		Parallelism:     3,
 		Delay:           0,
 		RateLimit:       k.rateLimit,
-		Strategy:        k.strategy,
+		Strategy:        "breadth-first",
 		NoScope:         false,
 		DisplayOutScope: false,
 		StoreResponse:   false,
@@ -141,8 +190,37 @@ func (k *KatanaLibModule) Discover(target wsTypes.Target) (*wsTypes.DiscoveryRes
 	// Disable logging during crawling to keep output clean
 	gologger.DefaultLogger.SetMaxLevel(levels.LevelSilent)
 
-	// Start crawling
-	err = crawler.Crawl(target.URL)
+	// Temporarily redirect stdout to suppress katana output
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	
+	// Consume the output in a goroutine to prevent blocking
+	go func() {
+		io.Copy(io.Discard, r)
+	}()
+
+	// Start crawling with timeout
+	crawlCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	// Run crawling in goroutine with timeout
+	crawlErr := make(chan error, 1)
+	go func() {
+		crawlErr <- crawler.Crawl(target.URL)
+	}()
+	
+	select {
+	case err = <-crawlErr:
+		// Crawling completed
+	case <-crawlCtx.Done():
+		// Timeout reached
+		err = fmt.Errorf("katana crawling timeout after 30 seconds")
+	}
+	
+	// Restore stdout
+	w.Close()
+	os.Stdout = oldStdout
 	if err != nil {
 		return result, fmt.Errorf("katana crawling failed: %w", err)
 	}

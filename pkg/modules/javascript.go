@@ -79,21 +79,21 @@ func (j *JavaScriptModule) Discover(target types.Target) (*types.DiscoveryResult
 
 	// First, discover JavaScript files
 	jsFiles := j.findJavaScriptFiles(target)
-	
+
 	// Use httpx to validate JavaScript files
 	httpxResults, err := j.httpx.ProbeBulk(jsFiles)
 	if err != nil {
 		return result, err
 	}
-	
+
 	// Process only valid JavaScript files
 	for _, httpxResult := range httpxResults {
 		if httpxResult.StatusCode == 200 {
 			// Check if it's actually JavaScript
-			if strings.Contains(strings.ToLower(httpxResult.ContentType), "javascript") || 
-			   strings.Contains(strings.ToLower(httpxResult.ContentType), "application/x-javascript") ||
-			   strings.Contains(httpxResult.URL, ".js") {
-				
+			if strings.Contains(strings.ToLower(httpxResult.ContentType), "javascript") ||
+				strings.Contains(strings.ToLower(httpxResult.ContentType), "application/x-javascript") ||
+				strings.Contains(httpxResult.URL, ".js") {
+
 				// Record the JS file itself as a discovered path
 				jsPath := types.Path{
 					URL:         httpxResult.URL,
@@ -104,7 +104,7 @@ func (j *JavaScriptModule) Discover(target types.Target) (*types.DiscoveryResult
 					Source:      "javascript-discovery",
 				}
 				result.Paths = append(result.Paths, jsPath)
-				
+
 				// Since httpx doesn't return body content, we'll analyze based on common patterns
 				// Add the JS file URL as a potential endpoint source
 				pathOnly := j.extractPath(httpxResult.URL, target.URL)
@@ -122,7 +122,7 @@ func (j *JavaScriptModule) Discover(target types.Target) (*types.DiscoveryResult
 	// Discover common API endpoints and patterns based on found JS files
 	if len(result.Paths) > 0 {
 		apiPatterns := j.generateCommonAPIPatterns(target.URL)
-		
+
 		// Probe API patterns
 		apiResults, err := j.httpx.ProbeBulk(apiPatterns)
 		if err == nil {
@@ -138,7 +138,7 @@ func (j *JavaScriptModule) Discover(target types.Target) (*types.DiscoveryResult
 						Source:      "javascript-api-pattern",
 					}
 					result.Paths = append(result.Paths, path)
-					
+
 					// Extract path for endpoint
 					pathOnly := j.extractPath(httpxResult.URL, target.URL)
 					endpoint := types.Endpoint{
@@ -159,7 +159,7 @@ func (j *JavaScriptModule) Discover(target types.Target) (*types.DiscoveryResult
 func (j *JavaScriptModule) findJavaScriptFiles(target types.Target) []string {
 	var jsFiles []string
 	baseURL := strings.TrimSuffix(target.URL, "/")
-	
+
 	// Common JavaScript file locations
 	commonJS := []string{
 		"/js/app.js",
@@ -234,18 +234,18 @@ func (j *JavaScriptModule) findJavaScriptFiles(target types.Target) []string {
 	// Build full URLs
 	for _, jsPath := range append(commonJS, frameworkJS...) {
 		jsFiles = append(jsFiles, baseURL+jsPath)
-		
+
 		// Also try minified versions
 		if !strings.HasSuffix(jsPath, ".min.js") {
 			minPath := strings.Replace(jsPath, ".js", ".min.js", 1)
 			jsFiles = append(jsFiles, baseURL+minPath)
 		}
-		
+
 		// Try with version numbers
 		for v := 1; v <= 3; v++ {
 			versionedPath := strings.Replace(jsPath, ".js", fmt.Sprintf(".v%d.js", v), 1)
 			jsFiles = append(jsFiles, baseURL+versionedPath)
-			
+
 			versionedPath = strings.Replace(jsPath, ".js", fmt.Sprintf("-%d.js", v), 1)
 			jsFiles = append(jsFiles, baseURL+versionedPath)
 		}
@@ -257,7 +257,7 @@ func (j *JavaScriptModule) findJavaScriptFiles(target types.Target) []string {
 func (j *JavaScriptModule) generateCommonAPIPatterns(baseURL string) []string {
 	var patterns []string
 	baseURL = strings.TrimSuffix(baseURL, "/")
-	
+
 	// Common API endpoints
 	apiPaths := []string{
 		"/api",
@@ -326,18 +326,18 @@ func (j *JavaScriptModule) generateCommonAPIPatterns(baseURL string) []string {
 		"/websocket",
 		"/socket.io",
 	}
-	
+
 	for _, apiPath := range apiPaths {
 		patterns = append(patterns, baseURL+apiPath)
 		patterns = append(patterns, baseURL+apiPath+"/")
-		
+
 		// Add with common suffixes
 		patterns = append(patterns, baseURL+apiPath+".json")
 		patterns = append(patterns, baseURL+apiPath+"/index")
 		patterns = append(patterns, baseURL+apiPath+"/endpoints")
 		patterns = append(patterns, baseURL+apiPath+"/routes")
 	}
-	
+
 	return j.deduplicateStrings(patterns)
 }
 
@@ -368,7 +368,7 @@ func (j *JavaScriptModule) applyCustomRegexes(regexType string, content string) 
 				} else {
 					value = match[0]
 				}
-				
+
 				if !seen[value] && value != "" {
 					seen[value] = true
 					results = append(results, value)
@@ -392,7 +392,7 @@ func (j *JavaScriptModule) extractCustomSecrets(content string) []types.Secret {
 					if len(context) > 50 {
 						context = context[:50] + "..."
 					}
-					
+
 					secret := types.Secret{
 						Type:    "custom-pattern",
 						Value:   "***REDACTED***",
@@ -411,14 +411,14 @@ func (j *JavaScriptModule) extractCustomSecrets(content string) []types.Secret {
 func (j *JavaScriptModule) deduplicateStrings(input []string) []string {
 	seen := make(map[string]bool)
 	var result []string
-	
+
 	for _, item := range input {
 		if !seen[item] && item != "" {
 			seen[item] = true
 			result = append(result, item)
 		}
 	}
-	
+
 	return result
 }
 

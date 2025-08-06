@@ -28,7 +28,7 @@ type StreamingWriter struct {
 func NewStreamingWriter(outputPath string, format string) (*StreamingWriter, error) {
 	var writer io.Writer
 	var file *os.File
-	
+
 	if outputPath == "" || outputPath == "-" {
 		writer = os.Stdout
 	} else {
@@ -39,7 +39,7 @@ func NewStreamingWriter(outputPath string, format string) (*StreamingWriter, err
 		file = f
 		writer = f
 	}
-	
+
 	sw := &StreamingWriter{
 		writer: bufio.NewWriterSize(writer, 64*1024), // 64KB buffer
 		file:   file,
@@ -49,7 +49,7 @@ func NewStreamingWriter(outputPath string, format string) (*StreamingWriter, err
 			Version:   "1.0.0",
 		},
 	}
-	
+
 	if format == "json" {
 		// For standard JSON, write opening structure
 		sw.writeRaw(`{"metadata":`)
@@ -57,7 +57,7 @@ func NewStreamingWriter(outputPath string, format string) (*StreamingWriter, err
 		sw.encoder.Encode(sw.metadata)
 		sw.writeRaw(`,"discoveries":[`)
 	}
-	
+
 	return sw, nil
 }
 
@@ -66,10 +66,10 @@ func (sw *StreamingWriter) WriteResult(result types.EngineResult) error {
 	if result.Error != nil {
 		return nil // Skip failed results
 	}
-	
+
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
-	
+
 	// Update statistics
 	sw.statsMu.Lock()
 	sw.statistics.TotalPaths += len(result.Discovery.Paths)
@@ -77,7 +77,7 @@ func (sw *StreamingWriter) WriteResult(result types.EngineResult) error {
 	sw.statistics.TotalSecrets += len(result.Discovery.Secrets)
 	sw.statistics.TotalForms += len(result.Discovery.Forms)
 	sw.statsMu.Unlock()
-	
+
 	// Create discovery entry
 	discovery := types.Discovery{
 		Domain:     result.Target.Domain,
@@ -87,7 +87,7 @@ func (sw *StreamingWriter) WriteResult(result types.EngineResult) error {
 		Parameters: result.Discovery.Parameters,
 		Secrets:    result.Discovery.Secrets,
 	}
-	
+
 	if sw.format == "jsonl" {
 		// JSON Lines format - each line is a complete record
 		record := map[string]interface{}{
@@ -95,7 +95,7 @@ func (sw *StreamingWriter) WriteResult(result types.EngineResult) error {
 			"target":    result.Target,
 			"discovery": discovery,
 		}
-		
+
 		encoder := json.NewEncoder(sw.writer)
 		if err := encoder.Encode(record); err != nil {
 			return fmt.Errorf("failed to encode result: %w", err)
@@ -105,14 +105,14 @@ func (sw *StreamingWriter) WriteResult(result types.EngineResult) error {
 		if sw.statistics.TotalPaths > 0 || sw.statistics.TotalEndpoints > 0 {
 			sw.writeRaw(",")
 		}
-		
+
 		encoder := json.NewEncoder(sw.writer)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(discovery); err != nil {
 			return fmt.Errorf("failed to encode result: %w", err)
 		}
 	}
-	
+
 	// Flush buffer to ensure data is written
 	return sw.writer.Flush()
 }
@@ -121,7 +121,7 @@ func (sw *StreamingWriter) WriteResult(result types.EngineResult) error {
 func (sw *StreamingWriter) Close() error {
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
-	
+
 	if sw.format == "json" {
 		// Close JSON structure
 		sw.writeRaw(`],"statistics":`)
@@ -140,17 +140,17 @@ func (sw *StreamingWriter) Close() error {
 		encoder := json.NewEncoder(sw.writer)
 		encoder.Encode(summary)
 	}
-	
+
 	// Flush any remaining data
 	if err := sw.writer.Flush(); err != nil {
 		return err
 	}
-	
+
 	// Close file if not stdout
 	if sw.file != nil {
 		return sw.file.Close()
 	}
-	
+
 	return nil
 }
 

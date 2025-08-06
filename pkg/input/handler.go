@@ -71,12 +71,12 @@ func (h *Handler) parseTarget(input string) (types.Target, error) {
 		matches := h.ipPortRegex.FindStringSubmatch(input)
 		ip := matches[1]
 		port := matches[2]
-		
+
 		scheme := "http"
 		if port == "443" || port == "8443" {
 			scheme = "https"
 		}
-		
+
 		url := fmt.Sprintf("%s://%s:%s", scheme, ip, port)
 		return h.parseURL(url)
 	}
@@ -86,12 +86,12 @@ func (h *Handler) parseTarget(input string) (types.Target, error) {
 		if len(parts) == 2 {
 			host := parts[0]
 			port := parts[1]
-			
+
 			scheme := "http"
 			if port == "443" || port == "8443" {
 				scheme = "https"
 			}
-			
+
 			url := fmt.Sprintf("%s://%s:%s", scheme, host, port)
 			return h.parseURL(url)
 		}
@@ -145,7 +145,7 @@ func (h *Handler) parseJSON(reader io.Reader) ([]types.Target, error) {
 
 func (h *Handler) parseJSONArray(arr []interface{}) ([]types.Target, error) {
 	var targets []types.Target
-	
+
 	for _, item := range arr {
 		switch v := item.(type) {
 		case string:
@@ -158,7 +158,7 @@ func (h *Handler) parseJSONArray(arr []interface{}) ([]types.Target, error) {
 			}
 		}
 	}
-	
+
 	return targets, nil
 }
 
@@ -166,21 +166,21 @@ func (h *Handler) parseJSONObject(obj map[string]interface{}) ([]types.Target, e
 	if hosts, ok := obj["hosts"].([]interface{}); ok {
 		return h.parseJSONArray(hosts)
 	}
-	
+
 	if domains, ok := obj["domains"].([]interface{}); ok {
 		return h.parseJSONArray(domains)
 	}
-	
+
 	if target, err := h.parseJSONObjectTarget(obj); err == nil {
 		return []types.Target{target}, nil
 	}
-	
+
 	return nil, fmt.Errorf("unable to extract targets from JSON object")
 }
 
 func (h *Handler) parseJSONObjectTarget(obj map[string]interface{}) (types.Target, error) {
 	var target types.Target
-	
+
 	if domain, ok := obj["domain"].(string); ok {
 		target.Domain = domain
 	} else if host, ok := obj["host"].(string); ok {
@@ -190,14 +190,14 @@ func (h *Handler) parseJSONObjectTarget(obj map[string]interface{}) (types.Targe
 	} else {
 		return target, fmt.Errorf("no valid target found in JSON object")
 	}
-	
+
 	if target.Domain != "" {
 		target.URL = "https://" + target.Domain
 		if port, ok := obj["port"].(float64); ok {
 			target.URL = fmt.Sprintf("https://%s:%.0f", target.Domain, port)
 		}
 	}
-	
+
 	return target, nil
 }
 
@@ -207,10 +207,10 @@ type NmapRun struct {
 }
 
 type NmapHost struct {
-	Status    NmapStatus    `xml:"status"`
-	Addresses []NmapAddress `xml:"address"`
+	Status    NmapStatus     `xml:"status"`
+	Addresses []NmapAddress  `xml:"address"`
 	Hostnames []NmapHostname `xml:"hostnames>hostname"`
-	Ports     NmapPorts     `xml:"ports"`
+	Ports     NmapPorts      `xml:"ports"`
 }
 
 type NmapStatus struct {
@@ -232,10 +232,10 @@ type NmapPorts struct {
 }
 
 type NmapPort struct {
-	Protocol string         `xml:"protocol,attr"`
-	PortID   string         `xml:"portid,attr"`
-	State    NmapPortState  `xml:"state"`
-	Service  NmapService    `xml:"service"`
+	Protocol string        `xml:"protocol,attr"`
+	PortID   string        `xml:"portid,attr"`
+	State    NmapPortState `xml:"state"`
+	Service  NmapService   `xml:"service"`
 }
 
 type NmapPortState struct {

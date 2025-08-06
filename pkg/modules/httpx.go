@@ -12,12 +12,12 @@ import (
 )
 
 type HTTPXModule struct {
-	threads      int
-	timeout      time.Duration
-	rateLimit    int
-	retries      int
+	threads        int
+	timeout        time.Duration
+	rateLimit      int
+	retries        int
 	followRedirect bool
-	statusCodes  []string
+	statusCodes    []string
 }
 
 func NewHTTPXModule(threads int, timeout time.Duration, rateLimit int) *HTTPXModule {
@@ -27,7 +27,7 @@ func NewHTTPXModule(threads int, timeout time.Duration, rateLimit int) *HTTPXMod
 		rateLimit:      rateLimit,
 		retries:        2,
 		followRedirect: true,
-		statusCodes:    []string{"200,201,202,203,204,205,206,207,208,226,300,301,302,303,304,305,307,308,401,403,404,405,500,501,502,503"},
+		statusCodes:    []string{"200,201,202,203,204,205,206,207,208,226,300,301,302,303,304,305,307,308,401,403"}, // Exclude 404s and 5xx errors for cleaner output
 	}
 }
 
@@ -122,6 +122,11 @@ func (h *HTTPXModule) probeTarget(targetURL string) (*HTTPXResult, error) {
 	// Add status code filters
 	if len(h.statusCodes) > 0 {
 		args = append(args, "-mc", strings.Join(h.statusCodes, ","))
+	}
+
+	// Check if httpx is installed
+	if _, err := exec.LookPath("httpx"); err != nil {
+		return nil, fmt.Errorf("httpx not found. Install it with: go install github.com/projectdiscovery/httpx/cmd/httpx@latest")
 	}
 
 	cmd := exec.Command("httpx", args...)
@@ -228,18 +233,18 @@ func (h *HTTPXModule) ProbeBulk(urls []string) ([]*HTTPXResult, error) {
 
 // HTTPXResult represents httpx JSON output
 type HTTPXResult struct {
-	URL            string   `json:"url"`
-	Input          string   `json:"input"`
-	StatusCode     int      `json:"status_code"`
-	ContentLength  int      `json:"content_length"`
-	ContentType    string   `json:"content_type"`
-	Title          string   `json:"title"`
-	WebServer      string   `json:"webserver"`
-	ResponseTime   string   `json:"time"`
-	Technologies   []string `json:"tech"`
-	Method         string   `json:"method"`
-	Host           string   `json:"host"`
-	Path           string   `json:"path"`
-	Scheme         string   `json:"scheme"`
+	URL             string              `json:"url"`
+	Input           string              `json:"input"`
+	StatusCode      int                 `json:"status_code"`
+	ContentLength   int                 `json:"content_length"`
+	ContentType     string              `json:"content_type"`
+	Title           string              `json:"title"`
+	WebServer       string              `json:"webserver"`
+	ResponseTime    string              `json:"time"`
+	Technologies    []string            `json:"tech"`
+	Method          string              `json:"method"`
+	Host            string              `json:"host"`
+	Path            string              `json:"path"`
+	Scheme          string              `json:"scheme"`
 	ResponseHeaders map[string][]string `json:"header,omitempty"`
 }

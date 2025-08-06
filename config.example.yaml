@@ -1,0 +1,204 @@
+# WebScope Configuration Example
+# This file demonstrates all available configuration options
+
+# Global settings
+global:
+  # Wordlist configuration
+  wordlists:
+    common_paths: "~/.webscope/wordlists/common-paths.txt"
+  
+  # JSluice configuration for JavaScript analysis
+  jsluice:
+    patterns:
+      urls:
+        - 'https?://[^\s<>"{}|\\^`\[\]]+'
+        - '//[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+      secrets:
+        - '(?i)(api[_-]?key|apikey)["\']?\s*[:=]\s*["\']?([a-zA-Z0-9_-]{20,})'
+        - '(?i)(secret|token)["\']?\s*[:=]\s*["\']?([a-zA-Z0-9_-]{20,})'
+      endpoints:
+        - '/api/[a-zA-Z0-9_-]+'
+        - '/(v1|v2|v3)/[a-zA-Z0-9_-]+'
+  
+  # Pattern detection configuration (similar to tomnomnom's gf)
+  patterns:
+    # Directory containing gf-style JSON pattern files
+    patterns_dir: "~/.gf"
+    
+    # Specific pattern files to load
+    patterns_files:
+      - "~/.gf/aws-keys.json"
+      - "~/.gf/dotnet-serialized.json"
+      - "~/.gf/java-serialized.json"
+      - "~/.gf/php-serialized.json"
+    
+    # Custom patterns defined in config
+    custom_patterns:
+      # Serialization patterns - Critical for security
+      - name: "dotnet-serialized"
+        category: "serialization"
+        pattern: 'AAEAAAD[/]+'
+        severity: "critical"
+        description: ".NET Binary Serialized Object"
+        enabled: true
+      
+      - name: "java-serialized"
+        category: "serialization"
+        patterns:
+          - 'ACED0005'
+          - 'rO0'
+          - 'H4sIA'
+        severity: "critical"
+        description: "Java Serialized Object"
+        enabled: true
+      
+      - name: "php-serialized"
+        category: "serialization"
+        patterns:
+          - 'a:[0-9]+:\{'
+          - 'O:[0-9]+:"[^"]+":'
+          - 's:[0-9]+:"'
+        severity: "critical"
+        description: "PHP Serialized Object"
+        enabled: true
+      
+      # API Keys and Secrets
+      - name: "aws-keys"
+        category: "secrets"
+        patterns:
+          - '(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'
+          - '(?i)aws(.{0,20})?(?-i)[\"\']?[0-9a-zA-Z\/+]{40}[\"\']?'
+        severity: "high"
+        description: "AWS Access Keys"
+        enabled: true
+      
+      # SQL Injection Parameters
+      - name: "sqli-params"
+        category: "parameters"
+        pattern: '(?i)(id|user|userid|username|email|name|q|query|search)='
+        severity: "high"
+        description: "Potential SQL Injection Parameter"
+        enabled: true
+
+# Scanning profiles
+profiles:
+  # Stealth profile - slow and careful
+  stealth:
+    description: "Slow and stealthy scanning"
+    global_limit: 5
+    httpx:
+      threads: 5
+      rate_limit: 2
+      timeout: 30
+      retries: 1
+      follow_redirect: false
+    katana:
+      depth: 1
+      rate_limit: 2
+      timeout: 30
+      concurrency: 2
+      strategy: "depth-first"
+    paths:
+      threads: 5
+      rate_limit: 2
+      smart_mode: false
+    false_positive:
+      enabled: true
+      baseline_count: 5
+      similarity_threshold: 0.8
+  
+  # Normal profile - balanced
+  normal:
+    description: "Balanced speed and thoroughness"
+    global_limit: 20
+    httpx:
+      threads: 20
+      rate_limit: 20
+      timeout: 10
+      retries: 2
+      follow_redirect: true
+      tech_detect: true
+      web_server: true
+    katana:
+      depth: 2
+      rate_limit: 20
+      timeout: 15
+      concurrency: 5
+      strategy: "breadth-first"
+      jsluice: true
+      form_extract: true
+    paths:
+      threads: 20
+      rate_limit: 20
+      smart_mode: true
+      max_paths: 1000
+    javascript:
+      enabled: true
+      advanced_mode: true
+      secret_detect: true
+      endpoint_extract: true
+    false_positive:
+      enabled: true
+      baseline_count: 5
+      max_length_diff: 100
+      min_length_ratio: 0.95
+  
+  # Aggressive profile - fast and thorough
+  aggressive:
+    description: "Fast and aggressive scanning"
+    global_limit: 50
+    httpx:
+      threads: 50
+      rate_limit: 100
+      timeout: 5
+      retries: 1
+      follow_redirect: true
+    katana:
+      depth: 3
+      rate_limit: 50
+      timeout: 10
+      concurrency: 10
+      strategy: "breadth-first"
+      jsluice: true
+    paths:
+      threads: 50
+      rate_limit: 100
+      smart_mode: true
+    false_positive:
+      enabled: false
+  
+  # Thorough profile - maximum coverage
+  thorough:
+    description: "Maximum coverage, ignore rate limits"
+    global_limit: 100
+    httpx:
+      threads: 100
+      rate_limit: 200
+      timeout: 10
+      retries: 3
+      follow_redirect: true
+      tech_detect: true
+      web_server: true
+    katana:
+      depth: 5
+      rate_limit: 100
+      timeout: 20
+      concurrency: 20
+      strategy: "breadth-first"
+      jsluice: true
+      form_extract: true
+      headless: true
+    paths:
+      threads: 100
+      rate_limit: 200
+      smart_mode: true
+      max_paths: 5000
+    javascript:
+      enabled: true
+      advanced_mode: true
+      secret_detect: true
+      endpoint_extract: true
+    false_positive:
+      enabled: true
+      baseline_count: 10
+      similarity_threshold: 0.9

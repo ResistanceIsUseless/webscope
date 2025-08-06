@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -14,10 +13,10 @@ import (
 
 // FalsePositiveDetector detects wildcard responses and filters false positives
 type FalsePositiveDetector struct {
-	httpx             *HTTPXModule
-	baselines         map[string]*BaselineResponse
-	thresholds        *FilterThresholds
-	patternAnalyzer   *PatternAnalyzer
+	httpx              *HTTPXModule
+	baselines          map[string]*BaselineResponse
+	thresholds         *FilterThresholds
+	patternAnalyzer    *PatternAnalyzer
 	responseSignatures map[string]*ResponseSignature
 }
 
@@ -67,12 +66,12 @@ func NewFalsePositiveDetector(timeout time.Duration, rateLimit int) *FalsePositi
 		responseSignatures: make(map[string]*ResponseSignature),
 		patternAnalyzer:    NewPatternAnalyzer(),
 		thresholds: &FilterThresholds{
-			MaxLengthDiff:     100,   // Allow 100 byte difference
-			MinLengthRatio:    0.95,  // 95% similarity for length
-			StatusCodeWeight:  0.3,   // 30% weight for status code
-			ContentTypeWeight: 0.25,  // 25% weight for content type
-			LengthWeight:      0.25,  // 25% weight for length
-			PatternWeight:     0.2,   // 20% weight for pattern analysis
+			MaxLengthDiff:     100,  // Allow 100 byte difference
+			MinLengthRatio:    0.95, // 95% similarity for length
+			StatusCodeWeight:  0.3,  // 30% weight for status code
+			ContentTypeWeight: 0.25, // 25% weight for content type
+			LengthWeight:      0.25, // 25% weight for length
+			PatternWeight:     0.2,  // 20% weight for pattern analysis
 		},
 	}
 }
@@ -106,40 +105,40 @@ func NewPatternAnalyzer() *PatternAnalyzer {
 // GenerateBaseline probes the target with random paths to establish baseline responses
 func (fp *FalsePositiveDetector) GenerateBaseline(baseURL string) error {
 	baseURL = strings.TrimSuffix(baseURL, "/")
-	
+
 	// Generate multiple random paths to get baseline responses
 	randomPaths := fp.generateRandomPaths(5)
 	var testURLs []string
-	
+
 	for _, path := range randomPaths {
 		testURLs = append(testURLs, baseURL+"/"+path)
 	}
-	
+
 	// Probe random paths with httpx
 	results, err := fp.httpx.ProbeBulk(testURLs)
 	if err != nil {
 		return fmt.Errorf("failed to generate baseline: %w", err)
 	}
-	
+
 	// Analyze responses and create baselines
 	fp.analyzeBaselineResponses(baseURL, results)
-	
+
 	return nil
 }
 
 // IsLikelyFalsePositive compares a result against known baselines
 func (fp *FalsePositiveDetector) IsLikelyFalsePositive(baseURL string, path types.Path) bool {
 	baseURL = strings.TrimSuffix(baseURL, "/")
-	
+
 	baseline, exists := fp.baselines[baseURL]
 	if !exists {
 		// No baseline available, assume valid
 		return false
 	}
-	
+
 	// Calculate similarity score
 	score := fp.calculateSimilarityScore(baseline, &path)
-	
+
 	// If similarity score is too high, it's likely a false positive
 	return score > 0.8
 }
@@ -154,75 +153,75 @@ func (fp *FalsePositiveDetector) FilterFalsePositives(baseURL string, result *ty
 		Forms:        result.Forms,
 		Parameters:   result.Parameters,
 	}
-	
+
 	// Filter paths
 	for _, path := range result.Paths {
 		if !fp.IsLikelyFalsePositive(baseURL, path) {
 			filtered.Paths = append(filtered.Paths, path)
 		}
 	}
-	
+
 	// Filter endpoints based on remaining valid paths
 	validPaths := make(map[string]bool)
 	for _, path := range filtered.Paths {
 		pathOnly := strings.TrimPrefix(path.URL, baseURL)
 		validPaths[pathOnly] = true
 	}
-	
+
 	for _, endpoint := range result.Endpoints {
 		if validPaths[endpoint.Path] {
 			filtered.Endpoints = append(filtered.Endpoints, endpoint)
 		}
 	}
-	
+
 	return filtered
 }
 
 func (fp *FalsePositiveDetector) generateRandomPaths(count int) []string {
 	var paths []string
-	
+
 	for i := 0; i < count; i++ {
 		// Generate random string of varying lengths
 		length := 8 + (i * 2) // 8, 10, 12, 14, 16 characters
 		randomBytes := make([]byte, length/2)
 		rand.Read(randomBytes)
 		randomPath := hex.EncodeToString(randomBytes)
-		
+
 		paths = append(paths, randomPath)
-		
+
 		// Also try with common extensions
 		paths = append(paths, randomPath+".html")
 		paths = append(paths, randomPath+".php")
 		paths = append(paths, randomPath+".js")
 	}
-	
+
 	return paths
 }
 
 func (fp *FalsePositiveDetector) analyzeBaselineResponses(baseURL string, results []*HTTPXResult) {
 	// Group responses by fingerprint
 	responseGroups := make(map[string][]*HTTPXResult)
-	
+
 	for _, result := range results {
 		fingerprint := fp.createResponseFingerprint(result)
 		responseGroups[fingerprint] = append(responseGroups[fingerprint], result)
 	}
-	
+
 	// Find the most common response pattern (likely the wildcard response)
 	var mostCommonFingerprint string
 	var maxCount int
-	
+
 	for fingerprint, group := range responseGroups {
 		if len(group) > maxCount {
 			maxCount = len(group)
 			mostCommonFingerprint = fingerprint
 		}
 	}
-	
+
 	// Create baseline from most common response pattern
 	if maxCount >= 2 && len(responseGroups[mostCommonFingerprint]) > 0 {
 		sample := responseGroups[mostCommonFingerprint][0]
-		
+
 		fp.baselines[baseURL] = &BaselineResponse{
 			StatusCode:    sample.StatusCode,
 			ContentLength: sample.ContentLength,
@@ -234,9 +233,9 @@ func (fp *FalsePositiveDetector) analyzeBaselineResponses(baseURL string, result
 
 func (fp *FalsePositiveDetector) createResponseFingerprint(result *HTTPXResult) string {
 	// Create a fingerprint based on key response characteristics
-	return fmt.Sprintf("%d:%s:%d", 
-		result.StatusCode, 
-		result.ContentType, 
+	return fmt.Sprintf("%d:%s:%d",
+		result.StatusCode,
+		result.ContentType,
 		fp.normalizeLength(result.ContentLength))
 }
 
@@ -247,17 +246,17 @@ func (fp *FalsePositiveDetector) normalizeLength(length int) int {
 
 func (fp *FalsePositiveDetector) calculateSimilarityScore(baseline *BaselineResponse, path *types.Path) float64 {
 	var score float64
-	
+
 	// Status code similarity
 	if baseline.StatusCode == path.Status {
 		score += fp.thresholds.StatusCodeWeight
 	}
-	
+
 	// Content type similarity
 	if strings.EqualFold(baseline.ContentType, path.ContentType) {
 		score += fp.thresholds.ContentTypeWeight
 	}
-	
+
 	// Content length similarity
 	lengthDiff := abs(baseline.ContentLength - path.Length)
 	if lengthDiff <= fp.thresholds.MaxLengthDiff {
@@ -273,7 +272,7 @@ func (fp *FalsePositiveDetector) calculateSimilarityScore(baseline *BaselineResp
 			}
 		}
 	}
-	
+
 	return score
 }
 

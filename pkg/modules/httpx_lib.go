@@ -2,6 +2,8 @@ package modules
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +30,7 @@ func NewHTTPXLibModule(threads int, timeout time.Duration, rateLimit int) *HTTPX
 		rateLimit:      rateLimit,
 		retries:        2,
 		followRedirect: true,
-		statusCodes:    []string{"200", "201", "202", "203", "204", "205", "206", "207", "208", "226", "300", "301", "302", "303", "304", "305", "307", "308", "401", "403", "404", "405", "500", "501", "502", "503"},
+		statusCodes:    []string{"200", "201", "202", "203", "204", "205", "206", "207", "208", "226", "300", "301", "302", "303", "304", "305", "307", "308", "401", "403"}, // Exclude 404s and 5xx errors for cleaner output
 	}
 }
 
@@ -81,6 +83,16 @@ func (h *HTTPXLibModule) probeTarget(targetURL string) *types.Path {
 	var resultPath *types.Path
 	var mu sync.Mutex
 
+	// Temporarily redirect stdout to suppress httpx output
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	
+	// Consume the output in a goroutine to prevent blocking
+	go func() {
+		io.Copy(io.Discard, r)
+	}()
+
 	options := runner.Options{
 		Methods:         "GET",
 		InputTargetHost: goflags.StringSlice{targetURL},
@@ -132,6 +144,10 @@ func (h *HTTPXLibModule) probeTarget(targetURL string) *types.Path {
 	defer httpxRunner.Close()
 
 	httpxRunner.RunEnumeration()
+	
+	// Restore stdout
+	w.Close()
+	os.Stdout = oldStdout
 
 	return resultPath
 }
@@ -139,6 +155,16 @@ func (h *HTTPXLibModule) probeTarget(targetURL string) *types.Path {
 func (h *HTTPXLibModule) ProbeBulk(urls []string) ([]*HTTPXResult, error) {
 	var results []*HTTPXResult
 	var mu sync.Mutex
+
+	// Temporarily redirect stdout to suppress httpx output
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	
+	// Consume the output in a goroutine to prevent blocking
+	go func() {
+		io.Copy(io.Discard, r)
+	}()
 
 	// Convert URLs to StringSlice
 	targets := goflags.StringSlice{}
@@ -196,6 +222,10 @@ func (h *HTTPXLibModule) ProbeBulk(urls []string) ([]*HTTPXResult, error) {
 	defer httpxRunner.Close()
 
 	httpxRunner.RunEnumeration()
+	
+	// Restore stdout
+	w.Close()
+	os.Stdout = oldStdout
 
 	return results, nil
 }

@@ -174,6 +174,16 @@ func NewEngine(config *Config) *Engine {
 			}
 			
 			engine.modules = append(engine.modules, modules.NewKatanaLibModuleWithConfig(katanaConfig, config.Timeout))
+		case "advanced-javascript", "advanced-js":
+			// Advanced JavaScript analysis with jsluice
+			var jsConfig *appconfig.JSluiceConfig
+			if config.AppConfig != nil {
+				jsConfig = &config.AppConfig.Global.JSluice
+			}
+			engine.modules = append(engine.modules, modules.NewAdvancedJavaScriptModule(config.Timeout, jsConfig))
+		case "patterns":
+			// Pattern-based detection module (similar to tomnomnom's gf)
+			engine.modules = append(engine.modules, modules.NewPatternModule(config.Timeout, config.AppConfig))
 		}
 	}
 

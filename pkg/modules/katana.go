@@ -24,8 +24,8 @@ func NewKatanaModule(depth int, timeout time.Duration, rateLimit int) *KatanaMod
 		depth:       depth,
 		timeout:     timeout,
 		rateLimit:   rateLimit,
-		jsluice:     true,  // Enable jsluice integration by default
-		formExtract: true,  // Enable form extraction by default
+		jsluice:     true, // Enable jsluice integration by default
+		formExtract: true, // Enable form extraction by default
 	}
 }
 
@@ -47,7 +47,7 @@ func (k *KatanaModule) Discover(target types.Target) (*types.DiscoveryResult, er
 
 	// Check if katana is installed
 	if _, err := exec.LookPath("katana"); err != nil {
-		return result, fmt.Errorf("katana not found in PATH: %w", err)
+		return result, fmt.Errorf("katana not found. Install it with: go install github.com/projectdiscovery/katana/cmd/katana@latest")
 	}
 
 	// Build katana command

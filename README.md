@@ -80,6 +80,7 @@ subdomain.example.com
 - **paths**: Path bruteforcing with smart variations, common endpoints, and enhanced false positive detection
 - **javascript**: JavaScript file analysis for endpoints and secrets
 - **advanced-javascript**: Deep JavaScript analysis using jsluice for GraphQL schemas, WebSocket endpoints, and entropy-based secret detection
+- **patterns**: Pattern-based detection for secrets, serialized objects, and vulnerabilities (compatible with tomnomnom's gf patterns)
 
 ## Output Formats
 
@@ -119,6 +120,37 @@ Traditional structured JSON output:
     "total_forms": 3
   }
 }
+```
+
+## Pattern Detection
+
+WebScope includes a powerful pattern detection system compatible with tomnomnom's gf patterns for finding interesting content in responses:
+
+### Supported Pattern Categories
+- **Serialization**: .NET, Java, PHP serialized objects (critical for deserialization attacks)
+- **Secrets**: API keys, tokens, passwords, credentials
+- **Injection**: SQL injection parameters, XSS sinks, command injection
+- **Files**: Backup files, configuration files, sensitive documents
+- **Infrastructure**: Internal IPs, debug endpoints, error messages
+- **Cloud**: AWS, Azure, GCP service URLs and credentials
+
+### Pattern Configuration
+```bash
+# Use existing gf pattern directory
+./webscope -i targets.txt -m httpx-lib,patterns -c config.yaml
+
+# Custom patterns in config file
+patterns:
+  patterns_dir: "~/.gf"
+  patterns_files:
+    - "~/.gf/dotnet-serialized.json"
+    - "~/.gf/java-serialized.json"
+  custom_patterns:
+    - name: "custom-secret"
+      category: "secrets"
+      pattern: '(?i)(secret|token)[\"\']?\s*[:=]\s*[\"\']?([a-zA-Z0-9_-]{20,})'
+      severity: "high"
+      enabled: true
 ```
 
 ## Integration

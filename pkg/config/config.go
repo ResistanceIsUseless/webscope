@@ -28,6 +28,7 @@ type Profile struct {
 type GlobalConfig struct {
 	Wordlists WordlistConfig `yaml:"wordlists" json:"wordlists"`
 	JSluice   JSluiceConfig  `yaml:"jsluice" json:"jsluice"`
+	Patterns  PatternConfig  `yaml:"patterns" json:"patterns"`
 }
 
 type WordlistConfig struct {
@@ -93,6 +94,23 @@ type FalsePositiveConfig struct {
 	MinLengthRatio      float64 `yaml:"min_length_ratio" json:"min_length_ratio,omitempty"`
 	SimilarityThreshold float64 `yaml:"similarity_threshold" json:"similarity_threshold,omitempty"`
 	BaselineCount       int     `yaml:"baseline_count" json:"baseline_count,omitempty"`
+}
+
+type PatternConfig struct {
+	PatternsDir     string            `yaml:"patterns_dir" json:"patterns_dir,omitempty"`
+	PatternsFiles   []string          `yaml:"patterns_files" json:"patterns_files,omitempty"`
+	CustomPatterns  []PatternRule     `yaml:"custom_patterns" json:"custom_patterns,omitempty"`
+	EnabledPatterns []string          `yaml:"enabled_patterns" json:"enabled_patterns,omitempty"`
+}
+
+type PatternRule struct {
+	Name        string   `yaml:"name" json:"name"`
+	Category    string   `yaml:"category" json:"category"`
+	Pattern     string   `yaml:"pattern" json:"pattern"`
+	Patterns    []string `yaml:"patterns" json:"patterns,omitempty"` // For multiple patterns
+	Severity    string   `yaml:"severity" json:"severity"`
+	Description string   `yaml:"description" json:"description"`
+	Enabled     bool     `yaml:"enabled" json:"enabled,omitempty"`
 }
 
 func Load(configPath string) (*Config, error) {
