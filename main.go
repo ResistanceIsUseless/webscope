@@ -227,8 +227,26 @@ func main() {
 
 	// Always show completion status
 	fmt.Fprintf(os.Stderr, "[*] Discovery complete: %d targets processed\n", processedCount)
-	fmt.Fprintf(os.Stderr, "[*] Results: %d paths, %d endpoints, %d secrets discovered\n",
-		stats.TotalPaths, stats.TotalEndpoints, stats.TotalSecrets)
+	fmt.Fprintf(os.Stderr, "[*] Results: %d paths, %d endpoints, %d secrets, %d findings discovered\n",
+		stats.TotalPaths, stats.TotalEndpoints, stats.TotalSecrets, stats.TotalFindings)
+	
+	// Show findings summary if we have interesting findings
+	if stats.TotalFindings > 0 {
+		fmt.Fprintf(os.Stderr, "[*] Interesting findings summary:\n")
+		if len(stats.CriticalFindings) > 0 {
+			fmt.Fprintf(os.Stderr, "  - Critical: %d findings (requires immediate attention)\n", len(stats.CriticalFindings))
+		}
+		if len(stats.HighPriorityFindings) > 0 {
+			fmt.Fprintf(os.Stderr, "  - High priority: %d findings (review recommended)\n", len(stats.HighPriorityFindings))
+		}
+		if stats.FindingsByCategory != nil {
+			for category, count := range stats.FindingsByCategory {
+				if category == "secrets" || category == "serialization" {
+					fmt.Fprintf(os.Stderr, "  - %s: %d findings\n", category, count)
+				}
+			}
+		}
+	}
 
 	if *outputFile != "" {
 		fmt.Fprintf(os.Stderr, "[*] Output saved to: %s\n", *outputFile)

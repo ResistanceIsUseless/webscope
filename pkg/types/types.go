@@ -28,6 +28,7 @@ type DiscoveryResult struct {
 	Parameters     []Parameter         `json:"parameters,omitempty"`
 	GraphQLSchemas []GraphQLSchema     `json:"graphql_schemas,omitempty"`
 	WebSockets     []WebSocketEndpoint `json:"websockets,omitempty"`
+	Findings       []InterestingFinding `json:"findings,omitempty"`
 }
 
 type Path struct {
@@ -140,6 +141,20 @@ type WebSocketEvent struct {
 	Description string                 `json:"description,omitempty"`
 }
 
+type InterestingFinding struct {
+	Category    string                 `json:"category"`
+	Priority    string                 `json:"priority"` // critical, high, medium, low, info
+	Title       string                 `json:"title"`
+	Description string                 `json:"description"`
+	URL         string                 `json:"url,omitempty"`
+	Evidence    string                 `json:"evidence,omitempty"`
+	Context     string                 `json:"context,omitempty"`
+	Source      string                 `json:"source"`
+	Confidence  string                 `json:"confidence,omitempty"` // high, medium, low
+	References  []string               `json:"references,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
 type WebScopeResult struct {
 	Metadata     Metadata                `json:"metadata"`
 	Statistics   Statistics              `json:"statistics"`
@@ -148,15 +163,16 @@ type WebScopeResult struct {
 }
 
 type Discovery struct {
-	Domain         string              `json:"domain"`
-	Paths          []Path              `json:"paths,omitempty"`
-	Endpoints      []Endpoint          `json:"endpoints,omitempty"`
-	Forms          []Form              `json:"forms,omitempty"`
-	Parameters     []Parameter         `json:"parameters,omitempty"`
-	Secrets        []Secret            `json:"secrets,omitempty"`
-	Historical     []Path              `json:"historical,omitempty"`
-	GraphQLSchemas []GraphQLSchema     `json:"graphql_schemas,omitempty"`
-	WebSockets     []WebSocketEndpoint `json:"websockets,omitempty"`
+	Domain         string                `json:"domain"`
+	Paths          []Path                `json:"paths,omitempty"`
+	Endpoints      []Endpoint            `json:"endpoints,omitempty"`
+	Forms          []Form                `json:"forms,omitempty"`
+	Parameters     []Parameter           `json:"parameters,omitempty"`
+	Secrets        []Secret              `json:"secrets,omitempty"`
+	Historical     []Path                `json:"historical,omitempty"`
+	GraphQLSchemas []GraphQLSchema       `json:"graphql_schemas,omitempty"`
+	WebSockets     []WebSocketEndpoint   `json:"websockets,omitempty"`
+	Findings       []InterestingFinding  `json:"findings,omitempty"`
 }
 
 type Metadata struct {
@@ -166,10 +182,15 @@ type Metadata struct {
 }
 
 type Statistics struct {
-	TotalPaths     int `json:"total_paths"`
-	TotalEndpoints int `json:"total_endpoints"`
-	TotalSecrets   int `json:"total_secrets"`
-	TotalForms     int `json:"total_forms"`
+	TotalPaths           int                    `json:"total_paths"`
+	TotalEndpoints       int                    `json:"total_endpoints"`
+	TotalSecrets         int                    `json:"total_secrets"`
+	TotalForms           int                    `json:"total_forms"`
+	TotalFindings        int                    `json:"total_findings"`
+	FindingsByPriority   map[string]int         `json:"findings_by_priority,omitempty"`
+	FindingsByCategory   map[string]int         `json:"findings_by_category,omitempty"`
+	CriticalFindings     []InterestingFinding   `json:"critical_findings,omitempty"`
+	HighPriorityFindings []InterestingFinding   `json:"high_priority_findings,omitempty"`
 }
 
 type HTTPClient interface {

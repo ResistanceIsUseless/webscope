@@ -319,12 +319,15 @@ func (e *Engine) processTarget(ctx context.Context, target types.Target) types.E
 	}
 
 	combinedResult := &types.DiscoveryResult{
-		Paths:        []types.Path{},
-		Endpoints:    []types.Endpoint{},
-		Technologies: []types.Technology{},
-		Secrets:      []types.Secret{},
-		Forms:        []types.Form{},
-		Parameters:   []types.Parameter{},
+		Paths:          []types.Path{},
+		Endpoints:      []types.Endpoint{},
+		Technologies:   []types.Technology{},
+		Secrets:        []types.Secret{},
+		Forms:          []types.Form{},
+		Parameters:     []types.Parameter{},
+		GraphQLSchemas: []types.GraphQLSchema{},
+		WebSockets:     []types.WebSocketEndpoint{},
+		Findings:       []types.InterestingFinding{},
 	}
 
 	for _, module := range e.modules {
@@ -345,13 +348,24 @@ func (e *Engine) processTarget(ctx context.Context, target types.Target) types.E
 			continue
 		}
 
+		// Combine all results
 		combinedResult.Paths = append(combinedResult.Paths, moduleResult.Paths...)
 		combinedResult.Endpoints = append(combinedResult.Endpoints, moduleResult.Endpoints...)
 		combinedResult.Technologies = append(combinedResult.Technologies, moduleResult.Technologies...)
 		combinedResult.Secrets = append(combinedResult.Secrets, moduleResult.Secrets...)
 		combinedResult.Forms = append(combinedResult.Forms, moduleResult.Forms...)
 		combinedResult.Parameters = append(combinedResult.Parameters, moduleResult.Parameters...)
+		combinedResult.GraphQLSchemas = append(combinedResult.GraphQLSchemas, moduleResult.GraphQLSchemas...)
+		combinedResult.WebSockets = append(combinedResult.WebSockets, moduleResult.WebSockets...)
+		combinedResult.Findings = append(combinedResult.Findings, moduleResult.Findings...)
 	}
+
+	// Generate interesting findings summary from all collected data
+	findingsAggregator := modules.NewFindingsAggregator()
+	interestingFindings := findingsAggregator.AggregateFindings(combinedResult, target.URL)
+	
+	// Combine module-generated findings with aggregated findings
+	combinedResult.Findings = append(combinedResult.Findings, interestingFindings...)
 
 	return types.EngineResult{
 		Target:    target,

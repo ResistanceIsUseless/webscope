@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/resistanceisuseless/webscope/pkg/modules"
 	"github.com/resistanceisuseless/webscope/pkg/types"
 )
 
@@ -76,16 +77,39 @@ func (sw *StreamingWriter) WriteResult(result types.EngineResult) error {
 	sw.statistics.TotalEndpoints += len(result.Discovery.Endpoints)
 	sw.statistics.TotalSecrets += len(result.Discovery.Secrets)
 	sw.statistics.TotalForms += len(result.Discovery.Forms)
+	sw.statistics.TotalFindings += len(result.Discovery.Findings)
+	
+	// Update findings statistics
+	if sw.statistics.FindingsByPriority == nil {
+		sw.statistics.FindingsByPriority = make(map[string]int)
+	}
+	if sw.statistics.FindingsByCategory == nil {
+		sw.statistics.FindingsByCategory = make(map[string]int)
+	}
+	
+	for _, finding := range result.Discovery.Findings {
+		sw.statistics.FindingsByPriority[finding.Priority]++
+		sw.statistics.FindingsByCategory[finding.Category]++
+		
+		if finding.Priority == "critical" {
+			sw.statistics.CriticalFindings = append(sw.statistics.CriticalFindings, finding)
+		} else if finding.Priority == "high" {
+			sw.statistics.HighPriorityFindings = append(sw.statistics.HighPriorityFindings, finding)
+		}
+	}
 	sw.statsMu.Unlock()
 
-	// Create discovery entry
+	// Create discovery entry with all discovery data
 	discovery := types.Discovery{
-		Domain:     result.Target.Domain,
-		Paths:      result.Discovery.Paths,
-		Endpoints:  result.Discovery.Endpoints,
-		Forms:      result.Discovery.Forms,
-		Parameters: result.Discovery.Parameters,
-		Secrets:    result.Discovery.Secrets,
+		Domain:         result.Target.Domain,
+		Paths:          result.Discovery.Paths,
+		Endpoints:      result.Discovery.Endpoints,
+		Forms:          result.Discovery.Forms,
+		Parameters:     result.Discovery.Parameters,
+		Secrets:        result.Discovery.Secrets,
+		GraphQLSchemas: result.Discovery.GraphQLSchemas,
+		WebSockets:     result.Discovery.WebSockets,
+		Findings:       result.Discovery.Findings,
 	}
 
 	if sw.format == "jsonl" {
@@ -123,20 +147,35 @@ func (sw *StreamingWriter) Close() error {
 	defer sw.mu.Unlock()
 
 	if sw.format == "json" {
-		// Close JSON structure
+		// Close JSON structure with findings summary
 		sw.writeRaw(`],"statistics":`)
 		encoder := json.NewEncoder(sw.writer)
 		encoder.SetIndent("", "  ")
 		encoder.Encode(sw.statistics)
+		
+		// Add findings summary
+		if sw.statistics.TotalFindings > 0 {
+			findingsSummary := sw.generateFindingsSummary()
+			sw.writeRaw(`,"findings_summary":`)
+			encoder.Encode(findingsSummary)
+		}
+		
 		sw.writeRaw("}")
 	} else if sw.format == "jsonl" {
-		// Write final statistics as last line
+		// Write final statistics and findings summary as last lines
 		summary := map[string]interface{}{
 			"timestamp":  time.Now(),
 			"type":       "summary",
 			"statistics": sw.statistics,
 			"metadata":   sw.metadata,
 		}
+		
+		// Add findings summary if we have findings
+		if sw.statistics.TotalFindings > 0 {
+			findingsSummary := sw.generateFindingsSummary()
+			summary["findings_summary"] = findingsSummary
+		}
+		
 		encoder := json.NewEncoder(sw.writer)
 		encoder.Encode(summary)
 	}
@@ -159,6 +198,28 @@ func (sw *StreamingWriter) GetStatistics() types.Statistics {
 	sw.statsMu.RLock()
 	defer sw.statsMu.RUnlock()
 	return sw.statistics
+}
+
+// generateFindingsSummary creates a summary of interesting findings
+func (sw *StreamingWriter) generateFindingsSummary() map[string]interface{} {
+	sw.statsMu.RLock()
+	defer sw.statsMu.RUnlock()
+	
+	// Collect all findings for aggregation
+	var allFindings []types.InterestingFinding
+	allFindings = append(allFindings, sw.statistics.CriticalFindings...)
+	allFindings = append(allFindings, sw.statistics.HighPriorityFindings...)
+	
+	// Use FindingsAggregator to create summary
+	aggregator := modules.NewFindingsAggregator()
+	summary := aggregator.GetFindingsSummary(allFindings)
+	
+	// Add additional summary information
+	summary["total_targets"] = sw.metadata.Targets
+	summary["scan_timestamp"] = sw.metadata.Timestamp
+	summary["scan_version"] = sw.metadata.Version
+	
+	return summary
 }
 
 // writeRaw writes raw string to buffer
