@@ -15,6 +15,7 @@ import (
 	"github.com/resistanceisuseless/webscope/pkg/discovery"
 	"github.com/resistanceisuseless/webscope/pkg/input"
 	"github.com/resistanceisuseless/webscope/pkg/output"
+	"github.com/resistanceisuseless/webscope/pkg/types"
 )
 
 const (
@@ -54,8 +55,8 @@ func showUsage() {
 	fmt.Printf("   -timeout int            time to wait in seconds before timeout (default 30)\n\n")
 	
 	fmt.Printf("MODULES:\n")
-	fmt.Printf("   -m, -modules string[]   discovery modules to run (default \"httpx-lib,robots,paths\")\n")
-	fmt.Printf("                          Available: httpx-lib,robots,paths,javascript,advanced-javascript,patterns\n\n")
+	fmt.Printf("   -m, -modules string[]   discovery modules to run (default \"robots,sitemap,paths,katana-lib,patterns\")\n")
+	fmt.Printf("                          Available: httpx-lib,robots,sitemap,paths,katana-lib,javascript,advanced-javascript,patterns\n\n")
 	
 	fmt.Printf("DEBUG:\n")
 	fmt.Printf("   -v, -verbose           show verbose output\n")
@@ -123,9 +124,9 @@ func main() {
 	flag.Var(&modules, "m", "")
 	flag.Var(&modules, "modules", "")
 	
-	// Default modules if none specified
+	// Default modules if none specified - focused on discovery
 	if len(modules) == 0 {
-		modules = stringSliceFlag{"httpx-lib", "robots", "paths"}
+		modules = stringSliceFlag{"robots", "sitemap", "paths", "katana-lib", "patterns"}
 	}
 	
 	flag.Usage = func() {
@@ -146,6 +147,10 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	// Determine if we're using simple mode (stdout findings only)  
+	// Simple mode when: no output file specified AND output format is default jsonl
+	usingSimpleMode := *outputFile == "" && *outputFmt == "jsonl"
 
 	// Load configuration
 	var appConfig *config.Config
@@ -180,8 +185,8 @@ func main() {
 		appConfig = &config.Config{}
 	}
 
-	// Always inform about config status unless silent
-	if !*silent {
+	// Always inform about config status unless silent or simple mode
+	if !*silent && !usingSimpleMode {
 		if configLoaded {
 			fmt.Fprintf(os.Stderr, "[INFO] Loaded config from: %s\n", configPath)
 		} else {
@@ -238,8 +243,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Always show target count unless silent
-	if !*silent {
+	// Always show target count unless silent or using simple mode
+	if !*silent && !usingSimpleMode {
 		fmt.Fprintf(os.Stderr, "[INFO] Loaded %d targets\n", len(parsedTargets))
 	}
 
@@ -293,13 +298,26 @@ func main() {
 		Profile:   *profile,
 	}
 
-	// Create streaming writer
-	streamWriter, err := output.NewStreamingWriter(*outputFile, *outputFmt)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Error creating output writer: %v\n", err)
-		os.Exit(1)
+	// Create output writer based on mode determined earlier
+	var resultWriter interface {
+		WriteResult(result types.EngineResult) error
+		Close() error
+		GetStatistics() types.Statistics
 	}
-	defer streamWriter.Close()
+
+	if !usingSimpleMode {
+		// Use streaming writer for file output or when JSON format explicitly requested
+		streamWriter, err := output.NewStreamingWriter(*outputFile, *outputFmt)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Error creating output writer: %v\n", err)
+			os.Exit(1)
+		}
+		resultWriter = streamWriter
+	} else {
+		// Use simple writer for stdout with findings only
+		resultWriter = output.NewSimpleWriter()
+	}
+	defer resultWriter.Close()
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -319,7 +337,7 @@ func main() {
 	}()
 
 	// Show discovery start
-	if !*silent {
+	if !*silent && !usingSimpleMode {
 		fmt.Fprintf(os.Stderr, "[INFO] Starting discovery with modules: %s\n", strings.Join(modules, ","))
 		fmt.Fprintf(os.Stderr, "[INFO] Workers: %d, Rate limit: %d/s, Timeout: %s\n", finalWorkers, finalRateLimit, finalTimeout)
 	}
@@ -332,7 +350,7 @@ func main() {
 	lastProgressTime := time.Now()
 
 	// Show initial progress
-	if !*silent {
+	if !*silent && !usingSimpleMode {
 		fmt.Fprintf(os.Stderr, "[INFO] Processing targets...\n")
 	}
 
@@ -340,7 +358,7 @@ func main() {
 		processedCount++
 
 		// Show basic progress every 10 seconds in non-verbose mode
-		if !*verbose && !*silent && time.Since(lastProgressTime) > 10*time.Second {
+		if !*verbose && !*silent && !usingSimpleMode && time.Since(lastProgressTime) > 10*time.Second {
 			fmt.Fprintf(os.Stderr, "[INFO] Progress: %d/%d targets processed...\n", processedCount, len(parsedTargets))
 			lastProgressTime = time.Now()
 		}
@@ -353,16 +371,18 @@ func main() {
 		}
 
 		// Write result immediately to prevent data loss
-		if err := streamWriter.WriteResult(result); err != nil {
-			fmt.Fprintf(os.Stderr, "[ERROR] Error writing result for %s: %v\n", result.Target.Domain, err)
+		if err := resultWriter.WriteResult(result); err != nil {
+			if !usingSimpleMode {
+				fmt.Fprintf(os.Stderr, "[ERROR] Error writing result for %s: %v\n", result.Target.Domain, err)
+			}
 		}
 	}
 
 	// Get final statistics
-	stats := streamWriter.GetStatistics()
+	stats := resultWriter.GetStatistics()
 
-	// Always show completion status unless silent
-	if !*silent {
+	// Show completion status and statistics unless silent or using simple mode
+	if !*silent && !usingSimpleMode {
 		fmt.Fprintf(os.Stderr, "[INFO] Discovery complete: %d targets processed\n", processedCount)
 		fmt.Fprintf(os.Stderr, "[INFO] Results: %d paths, %d endpoints, %d secrets, %d findings discovered\n",
 			stats.TotalPaths, stats.TotalEndpoints, stats.TotalSecrets, stats.TotalFindings)
