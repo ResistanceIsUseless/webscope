@@ -185,7 +185,20 @@ func (k *KatanaLibModule) Discover(target wsTypes.Target) (*wsTypes.DiscoveryRes
 	if err != nil {
 		return result, fmt.Errorf("failed to create katana crawler: %w", err)
 	}
-	defer crawler.Close()
+
+	// Ensure crawler is properly closed even on panic or timeout
+	var crawlerClosed bool
+	var closeMutex sync.Mutex
+	
+	closeCrawler := func() {
+		closeMutex.Lock()
+		defer closeMutex.Unlock()
+		if !crawlerClosed {
+			crawler.Close()
+			crawlerClosed = true
+		}
+	}
+	defer closeCrawler()
 
 	// Disable logging during crawling to keep output clean
 	gologger.DefaultLogger.SetMaxLevel(levels.LevelSilent)
@@ -196,31 +209,61 @@ func (k *KatanaLibModule) Discover(target wsTypes.Target) (*wsTypes.DiscoveryRes
 	os.Stdout = w
 	
 	// Consume the output in a goroutine to prevent blocking
+	outputDone := make(chan struct{})
 	go func() {
+		defer close(outputDone)
 		io.Copy(io.Discard, r)
 	}()
 
-	// Start crawling with timeout
-	crawlCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Start crawling with timeout - reduced from 30s to 15s for faster recovery
+	crawlCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	
-	// Run crawling in goroutine with timeout
+	// Run crawling in goroutine with proper error handling
 	crawlErr := make(chan error, 1)
+	crawlDone := make(chan struct{})
+	
 	go func() {
-		crawlErr <- crawler.Crawl(target.URL)
+		defer close(crawlDone)
+		err := crawler.Crawl(target.URL)
+		select {
+		case crawlErr <- err:
+		default:
+		}
 	}()
 	
 	select {
 	case err = <-crawlErr:
-		// Crawling completed
+		// Crawling completed normally
 	case <-crawlCtx.Done():
-		// Timeout reached
-		err = fmt.Errorf("katana crawling timeout after 30 seconds")
+		// Timeout reached - force cleanup
+		closeCrawler() // Explicitly close crawler on timeout
+		err = fmt.Errorf("katana crawling timeout after 15 seconds")
 	}
 	
-	// Restore stdout
+	// Clean up stdout redirection
 	w.Close()
 	os.Stdout = oldStdout
+	
+	// Wait for output consumer to finish with timeout
+	outputTimeout := time.NewTimer(2 * time.Second)
+	select {
+	case <-outputDone:
+		outputTimeout.Stop()
+	case <-outputTimeout.C:
+		// Output consumer timed out - this is acceptable
+	}
+	
+	// Wait for crawl goroutine to complete with timeout
+	crawlTimeout := time.NewTimer(2 * time.Second)
+	select {
+	case <-crawlDone:
+		crawlTimeout.Stop()
+	case <-crawlTimeout.C:
+		// Crawl goroutine didn't finish - force cleanup
+		closeCrawler()
+	}
+	
 	if err != nil {
 		return result, fmt.Errorf("katana crawling failed: %w", err)
 	}

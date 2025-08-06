@@ -89,7 +89,9 @@ func (h *HTTPXLibModule) probeTarget(targetURL string) *types.Path {
 	os.Stdout = w
 	
 	// Consume the output in a goroutine to prevent blocking
+	outputDone := make(chan struct{})
 	go func() {
+		defer close(outputDone)
 		io.Copy(io.Discard, r)
 	}()
 
@@ -133,21 +135,72 @@ func (h *HTTPXLibModule) probeTarget(targetURL string) *types.Path {
 
 	// Validate options
 	if err := options.ValidateOptions(); err != nil {
+		w.Close()
+		os.Stdout = oldStdout
+		// Wait for output consumer to finish
+		select {
+		case <-outputDone:
+		case <-time.After(1 * time.Second):
+		}
 		return nil
 	}
 
 	// Create and run httpx
 	httpxRunner, err := runner.New(&options)
 	if err != nil {
+		w.Close()
+		os.Stdout = oldStdout
+		// Wait for output consumer to finish
+		select {
+		case <-outputDone:
+		case <-time.After(1 * time.Second):
+		}
 		return nil
 	}
-	defer httpxRunner.Close()
-
-	httpxRunner.RunEnumeration()
 	
-	// Restore stdout
+	// Ensure proper cleanup
+	var runnerClosed bool
+	var closeMutex sync.Mutex
+	
+	closeRunner := func() {
+		closeMutex.Lock()
+		defer closeMutex.Unlock()
+		if !runnerClosed {
+			httpxRunner.Close()
+			runnerClosed = true
+		}
+	}
+	defer closeRunner()
+
+	// Run enumeration with timeout
+	enumerationDone := make(chan struct{})
+	go func() {
+		defer close(enumerationDone)
+		httpxRunner.RunEnumeration()
+	}()
+	
+	// Wait for enumeration to complete or timeout
+	timeout := time.NewTimer(time.Duration(h.timeout.Seconds()+5) * time.Second)
+	select {
+	case <-enumerationDone:
+		timeout.Stop()
+	case <-timeout.C:
+		// Force cleanup on timeout
+		closeRunner()
+	}
+	
+	// Clean up stdout redirection
 	w.Close()
 	os.Stdout = oldStdout
+	
+	// Wait for output consumer to finish with timeout
+	outputTimeout := time.NewTimer(2 * time.Second)
+	select {
+	case <-outputDone:
+		outputTimeout.Stop()
+	case <-outputTimeout.C:
+		// Output consumer timed out - this is acceptable
+	}
 
 	return resultPath
 }
@@ -162,7 +215,9 @@ func (h *HTTPXLibModule) ProbeBulk(urls []string) ([]*HTTPXResult, error) {
 	os.Stdout = w
 	
 	// Consume the output in a goroutine to prevent blocking
+	outputDone := make(chan struct{})
 	go func() {
+		defer close(outputDone)
 		io.Copy(io.Discard, r)
 	}()
 
@@ -211,21 +266,72 @@ func (h *HTTPXLibModule) ProbeBulk(urls []string) ([]*HTTPXResult, error) {
 
 	// Validate options
 	if err := options.ValidateOptions(); err != nil {
+		w.Close()
+		os.Stdout = oldStdout
+		// Wait for output consumer to finish
+		select {
+		case <-outputDone:
+		case <-time.After(1 * time.Second):
+		}
 		return nil, err
 	}
 
 	// Create and run httpx
 	httpxRunner, err := runner.New(&options)
 	if err != nil {
+		w.Close()
+		os.Stdout = oldStdout
+		// Wait for output consumer to finish
+		select {
+		case <-outputDone:
+		case <-time.After(1 * time.Second):
+		}
 		return nil, err
 	}
-	defer httpxRunner.Close()
 
-	httpxRunner.RunEnumeration()
+	// Ensure proper cleanup
+	var runnerClosed bool
+	var closeMutex sync.Mutex
 	
-	// Restore stdout
+	closeRunner := func() {
+		closeMutex.Lock()
+		defer closeMutex.Unlock()
+		if !runnerClosed {
+			httpxRunner.Close()
+			runnerClosed = true
+		}
+	}
+	defer closeRunner()
+
+	// Run enumeration with timeout
+	enumerationDone := make(chan struct{})
+	go func() {
+		defer close(enumerationDone)
+		httpxRunner.RunEnumeration()
+	}()
+	
+	// Wait for enumeration to complete or timeout
+	timeout := time.NewTimer(time.Duration(h.timeout.Seconds()*float64(len(urls))/10+30) * time.Second)
+	select {
+	case <-enumerationDone:
+		timeout.Stop()
+	case <-timeout.C:
+		// Force cleanup on timeout
+		closeRunner()
+	}
+	
+	// Clean up stdout redirection
 	w.Close()
 	os.Stdout = oldStdout
+	
+	// Wait for output consumer to finish with timeout
+	outputTimeout := time.NewTimer(2 * time.Second)
+	select {
+	case <-outputDone:
+		outputTimeout.Stop()
+	case <-outputTimeout.C:
+		// Output consumer timed out - this is acceptable
+	}
 
 	return results, nil
 }
