@@ -80,15 +80,7 @@ func (a *AdvancedJavaScriptModule) Discover(target types.Target) (*types.Discove
 	wsEndpoints := a.findWebSocketEndpoints(target)
 	for _, wsEndpoint := range wsEndpoints {
 		result.WebSockets = append(result.WebSockets, wsEndpoint)
-
-		// Add as endpoint
-		path := a.extractPath(wsEndpoint.URL, target.URL)
-		result.Endpoints = append(result.Endpoints, types.Endpoint{
-			Path:   path,
-			Type:   "websocket",
-			Method: "GET",
-			Source: "advanced-javascript",
-		})
+		// Don't add WebSocket URLs as regular endpoints - they have their own section
 	}
 
 	// Discover JavaScript files and analyze them for patterns
