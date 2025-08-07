@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -28,6 +29,10 @@ type KatanaLibModule struct {
 	formExtract bool
 	headless    bool
 	strategy    string
+	
+	// Proxy configuration
+	proxyURL       string
+	proxyHawkURL   string
 }
 
 func NewKatanaLibModule(depth int, timeout time.Duration, rateLimit int) *KatanaLibModule {
@@ -87,6 +92,8 @@ func NewKatanaLibModuleWithConfig(cfg config.KatanaConfig, fallbackTimeout time.
 		formExtract: cfg.FormExtract,
 		headless:    cfg.Headless,
 		strategy:    strategy,
+		proxyURL:    cfg.ProxyURL,
+		proxyHawkURL: cfg.ProxyHawkURL,
 	}
 }
 
@@ -167,6 +174,21 @@ func (k *KatanaLibModule) Discover(target wsTypes.Target) (*wsTypes.DiscoveryRes
 				}
 			}
 		},
+	}
+	
+	// Configure proxy if available
+	if k.proxyURL != "" {
+		options.Proxy = []string{k.proxyURL}
+	} else if k.proxyHawkURL != "" {
+		// Use ProxyHawk as SOCKS5 proxy (default port 1080)
+		if proxyHawkParsed, err := url.Parse(k.proxyHawkURL); err == nil {
+			// Convert WebSocket URL to SOCKS5 proxy URL
+			proxyHawkParsed.Scheme = "socks5"
+			if proxyHawkParsed.Port() == "8888" {
+				proxyHawkParsed.Host = proxyHawkParsed.Hostname() + ":1080"
+			}
+			options.Proxy = []string{proxyHawkParsed.String()}
+		}
 	}
 
 	// Validate target URL

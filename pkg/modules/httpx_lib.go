@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/httpx/runner"
+	"github.com/resistanceisuseless/webscope/pkg/config"
 	"github.com/resistanceisuseless/webscope/pkg/types"
 )
 
@@ -21,6 +23,10 @@ type HTTPXLibModule struct {
 	retries        int
 	followRedirect bool
 	statusCodes    []string
+	
+	// Proxy configuration
+	proxyURL       string
+	proxyHawkURL   string
 }
 
 func NewHTTPXLibModule(threads int, timeout time.Duration, rateLimit int) *HTTPXLibModule {
@@ -32,6 +38,38 @@ func NewHTTPXLibModule(threads int, timeout time.Duration, rateLimit int) *HTTPX
 		followRedirect: true,
 		statusCodes:    []string{"200", "201", "202", "203", "204", "205", "206", "207", "208", "226", "300", "301", "302", "303", "304", "305", "307", "308", "401", "403"}, // Exclude 404s and 5xx errors for cleaner output
 	}
+}
+
+func NewHTTPXLibModuleWithConfig(httpxConfig config.HTTPXConfig) *HTTPXLibModule {
+	module := &HTTPXLibModule{
+		threads:        httpxConfig.Threads,
+		timeout:        time.Duration(httpxConfig.Timeout) * time.Second,
+		rateLimit:      httpxConfig.RateLimit,
+		retries:        httpxConfig.Retries,
+		followRedirect: httpxConfig.FollowRedirect,
+		statusCodes:    httpxConfig.StatusCodes,
+		proxyURL:       httpxConfig.ProxyURL,
+		proxyHawkURL:   httpxConfig.ProxyHawkURL,
+	}
+	
+	// Set defaults if not configured
+	if module.threads == 0 {
+		module.threads = 20
+	}
+	if module.timeout == 0 {
+		module.timeout = 10 * time.Second
+	}
+	if module.rateLimit == 0 {
+		module.rateLimit = 20
+	}
+	if module.retries == 0 {
+		module.retries = 2
+	}
+	if len(module.statusCodes) == 0 {
+		module.statusCodes = []string{"200", "201", "202", "203", "204", "205", "206", "207", "208", "226", "300", "301", "302", "303", "304", "305", "307", "308", "401", "403"}
+	}
+	
+	return module
 }
 
 func (h *HTTPXLibModule) Name() string {
@@ -131,6 +169,29 @@ func (h *HTTPXLibModule) probeTarget(targetURL string) *types.Path {
 			}
 			mu.Unlock()
 		},
+	}
+	
+	// Configure proxy if available
+	if h.proxyURL != "" {
+		// Determine proxy type based on URL scheme  
+		if proxyURLParsed, err := url.Parse(h.proxyURL); err == nil {
+			switch proxyURLParsed.Scheme {
+			case "http", "https":
+				options.HTTPProxy = h.proxyURL
+			case "socks5":
+				options.SocksProxy = h.proxyURL
+			}
+		}
+	} else if h.proxyHawkURL != "" {
+		// Use ProxyHawk as SOCKS5 proxy (default port 1080)
+		if proxyHawkParsed, err := url.Parse(h.proxyHawkURL); err == nil {
+			// Convert WebSocket URL to SOCKS5 proxy URL
+			proxyHawkParsed.Scheme = "socks5"
+			if proxyHawkParsed.Port() == "8888" {
+				proxyHawkParsed.Host = proxyHawkParsed.Hostname() + ":1080"
+			}
+			options.SocksProxy = proxyHawkParsed.String()
+		}
 	}
 
 	// Validate options

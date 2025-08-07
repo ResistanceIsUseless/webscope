@@ -103,19 +103,16 @@ func NewEngine(config *Config) *Engine {
 			}
 			engine.modules = append(engine.modules, modules.NewHTTPXModule(threads, config.Timeout, rateLimit))
 		case "httpx-lib":
-			// Use httpx as a library instead of CLI
-			threads := 50
-			rateLimit := config.RateLimit
+			// Use httpx as a library instead of CLI with full config support
 			if config.AppConfig != nil && config.Profile != "" {
 				httpxConfig := config.AppConfig.GetHTTPXConfig(config.Profile)
-				if httpxConfig.Threads > 0 {
-					threads = httpxConfig.Threads
-				}
-				if httpxConfig.RateLimit > 0 {
-					rateLimit = httpxConfig.RateLimit
-				}
+				engine.modules = append(engine.modules, modules.NewHTTPXLibModuleWithConfig(httpxConfig))
+			} else {
+				// Fallback to legacy constructor
+				threads := 50
+				rateLimit := config.RateLimit
+				engine.modules = append(engine.modules, modules.NewHTTPXLibModule(threads, config.Timeout, rateLimit))
 			}
-			engine.modules = append(engine.modules, modules.NewHTTPXLibModule(threads, config.Timeout, rateLimit))
 		case "http":
 			// Deprecated: Use httpx module instead
 			engine.modules = append(engine.modules, modules.NewHTTPModule(config.Timeout))

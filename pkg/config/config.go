@@ -72,6 +72,10 @@ type KatanaConfig struct {
 	Headless      bool   `yaml:"headless" json:"headless,omitempty"`
 	BodyReadSize  int    `yaml:"body_read_size" json:"body_read_size,omitempty"`
 	MaxResponses  int    `yaml:"max_responses" json:"max_responses,omitempty"`
+	
+	// ProxyHawk Integration
+	ProxyURL       string `yaml:"proxy_url" json:"proxy_url,omitempty"`           // HTTP/SOCKS5 proxy URL
+	ProxyHawkURL   string `yaml:"proxyhawk_url" json:"proxyhawk_url,omitempty"`   // ProxyHawk server URL
 }
 
 type HTTPXConfig struct {
@@ -86,6 +90,10 @@ type HTTPXConfig struct {
 	CustomHeaders  []string `yaml:"custom_headers" json:"custom_headers,omitempty"`
 	TechDetect     bool     `yaml:"tech_detect" json:"tech_detect,omitempty"`
 	WebServer      bool     `yaml:"web_server" json:"web_server,omitempty"`
+	
+	// ProxyHawk Integration
+	ProxyURL       string   `yaml:"proxy_url" json:"proxy_url,omitempty"`           // HTTP/SOCKS5 proxy URL
+	ProxyHawkURL   string   `yaml:"proxyhawk_url" json:"proxyhawk_url,omitempty"`   // ProxyHawk server URL
 }
 
 type FalsePositiveConfig struct {
