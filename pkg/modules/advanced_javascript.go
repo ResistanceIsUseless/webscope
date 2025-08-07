@@ -1,7 +1,11 @@
 package modules
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"math"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -18,6 +22,7 @@ type AdvancedJavaScriptModule struct {
 	websocketRegex     *regexp.Regexp
 	secretEntropyRegex *regexp.Regexp
 	config             *config.JSluiceConfig
+	validatedEndpoints map[string]bool // Track validated endpoints to avoid loops
 }
 
 func NewAdvancedJavaScriptModule(timeout time.Duration, jsConfig *config.JSluiceConfig) *AdvancedJavaScriptModule {
@@ -32,6 +37,7 @@ func NewAdvancedJavaScriptModule(timeout time.Duration, jsConfig *config.JSluice
 		// High-entropy secrets (API keys, tokens, etc.)
 		secretEntropyRegex: regexp.MustCompile(`["'\x60]([A-Za-z0-9+/=_-]{20,})["'\x60]`),
 		config:             jsConfig,
+		validatedEndpoints: make(map[string]bool),
 	}
 }
 
@@ -154,25 +160,105 @@ func (a *AdvancedJavaScriptModule) findGraphQLEndpoints(target types.Target) []s
 }
 
 func (a *AdvancedJavaScriptModule) probeGraphQLSchema(endpoint, baseURL string) *types.GraphQLSchema {
-	// For now, just create a basic schema entry since we can't actually make the HTTP request
-	// In a real implementation, we'd use httpx to POST an introspection query
-	schema := &types.GraphQLSchema{
-		Endpoint:      endpoint,
-		Source:        "advanced-javascript",
-		Types:         []types.GraphQLType{},
-		Queries:       []types.GraphQLOperation{},
-		Mutations:     []types.GraphQLOperation{},
-		Subscriptions: []types.GraphQLOperation{},
+	// Try to validate the GraphQL endpoint with a simple introspection query
+	if a.validateGraphQLEndpoint(endpoint) {
+		// Valid GraphQL endpoint found
+		fmt.Printf("[GraphQL] Validated endpoint: %s\n", endpoint)
+		schema := &types.GraphQLSchema{
+			Endpoint:      endpoint,
+			Source:        "advanced-javascript",
+			Types:         []types.GraphQLType{},
+			Queries:       []types.GraphQLOperation{},
+			Mutations:     []types.GraphQLOperation{},
+			Subscriptions: []types.GraphQLOperation{},
+		}
+
+		// Mark as validated
+		schema.Queries = append(schema.Queries, types.GraphQLOperation{
+			Name:        "__typename",
+			Type:        "query",
+			Description: "GraphQL endpoint validated with introspection query",
+		})
+
+		return schema
 	}
 
-	// Add some common GraphQL patterns we might detect
-	schema.Queries = append(schema.Queries, types.GraphQLOperation{
-		Name:        "common_query_detected",
-		Type:        "query",
-		Description: "Detected from JavaScript patterns",
-	})
+	// Endpoint didn't validate - return nil
+	return nil
+}
 
-	return schema
+// validateGraphQLEndpoint checks if an endpoint is a valid GraphQL endpoint
+func (a *AdvancedJavaScriptModule) validateGraphQLEndpoint(endpoint string) bool {
+	// Check if we've already validated this endpoint (avoid loops)
+	if validated, exists := a.validatedEndpoints[endpoint]; exists {
+		return validated
+	}
+	
+	// Mark as being checked to avoid loops
+	a.validatedEndpoints[endpoint] = false
+	
+	// Create a simple introspection query
+	query := map[string]interface{}{
+		"query": "{ __typename }",
+	}
+	
+	jsonData, err := json.Marshal(query)
+	if err != nil {
+		return false
+	}
+	
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Don't follow redirects for GraphQL endpoints
+			return http.ErrUseLastResponse
+		},
+	}
+	
+	// Create POST request
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return false
+	}
+	
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; WebScope/1.0)")
+	
+	// Make request
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	
+	// Check if it's a successful response
+	if resp.StatusCode != 200 {
+		return false
+	}
+	
+	// Try to parse response as JSON
+	var result map[string]interface{}
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(&result); err != nil {
+		return false
+	}
+	
+	// Check if response has typical GraphQL structure
+	if _, hasData := result["data"]; hasData {
+		a.validatedEndpoints[endpoint] = true
+		return true
+	}
+	if _, hasErrors := result["errors"]; hasErrors {
+		// Even error responses can indicate a valid GraphQL endpoint
+		a.validatedEndpoints[endpoint] = true
+		return true
+	}
+	
+	a.validatedEndpoints[endpoint] = false
+	return false
 }
 
 func (a *AdvancedJavaScriptModule) findWebSocketEndpoints(target types.Target) []types.WebSocketEndpoint {
