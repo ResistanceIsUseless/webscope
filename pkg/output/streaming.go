@@ -15,14 +15,15 @@ import (
 
 // StreamingWriter handles concurrent streaming output of results
 type StreamingWriter struct {
-	writer     *bufio.Writer
-	encoder    *json.Encoder
-	mu         sync.Mutex
-	file       *os.File
-	metadata   types.Metadata
-	statistics types.Statistics
-	statsMu    sync.RWMutex
-	format     string // "jsonl" or "json"
+	writer        *bufio.Writer
+	encoder       *json.Encoder
+	mu            sync.Mutex
+	file          *os.File
+	metadata      types.Metadata
+	statistics    types.Statistics
+	statsMu       sync.RWMutex
+	format        string // "jsonl" or "json"
+	firstRecord   bool   // Track if this is the first record for JSON format
 }
 
 // NewStreamingWriter creates a new streaming writer
@@ -42,9 +43,10 @@ func NewStreamingWriter(outputPath string, format string) (*StreamingWriter, err
 	}
 
 	sw := &StreamingWriter{
-		writer: bufio.NewWriterSize(writer, 64*1024), // 64KB buffer
-		file:   file,
-		format: format,
+		writer:      bufio.NewWriterSize(writer, 64*1024), // 64KB buffer
+		file:        file,
+		format:      format,
+		firstRecord: true,
 		metadata: types.Metadata{
 			Timestamp: time.Now(),
 			Version:   "1.0.0",
@@ -126,8 +128,10 @@ func (sw *StreamingWriter) WriteResult(result types.EngineResult) error {
 		}
 	} else {
 		// Standard JSON array format
-		if sw.statistics.TotalPaths > 0 || sw.statistics.TotalEndpoints > 0 {
+		if !sw.firstRecord {
 			sw.writeRaw(",")
+		} else {
+			sw.firstRecord = false
 		}
 
 		encoder := json.NewEncoder(sw.writer)
