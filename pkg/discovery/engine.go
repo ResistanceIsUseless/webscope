@@ -144,6 +144,11 @@ func NewEngine(config *Config) *Engine {
 			}
 			engine.modules = append(engine.modules, modules.NewKatanaModule(depth, config.Timeout, rateLimit))
 		case "katana-lib":
+			// WARN: katana-lib can cause goroutine leaks in bulk operations
+			if config.Verbose {
+				fmt.Fprintf(os.Stderr, "[WARN] katana-lib module may cause goroutine leaks in large scans\n")
+			}
+			
 			// Configure katana library module with profile settings
 			var katanaConfig appconfig.KatanaConfig
 			if config.Profile != "" && config.AppConfig != nil {
@@ -152,7 +157,7 @@ func NewEngine(config *Config) *Engine {
 			
 			// Set defaults if config is empty
 			if katanaConfig.Depth == 0 {
-				katanaConfig.Depth = 2
+				katanaConfig.Depth = 1 // Reduce default depth
 			}
 			if katanaConfig.RateLimit == 0 {
 				katanaConfig.RateLimit = config.RateLimit
@@ -161,10 +166,10 @@ func NewEngine(config *Config) *Engine {
 				katanaConfig.Timeout = int(config.Timeout.Seconds())
 			}
 			if katanaConfig.Concurrency == 0 {
-				katanaConfig.Concurrency = 5
+				katanaConfig.Concurrency = 2 // Reduce concurrency
 			}
 			if katanaConfig.Parallelism == 0 {
-				katanaConfig.Parallelism = 5
+				katanaConfig.Parallelism = 2 // Reduce parallelism
 			}
 			if katanaConfig.Strategy == "" {
 				katanaConfig.Strategy = "breadth-first"

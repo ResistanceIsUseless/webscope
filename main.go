@@ -56,8 +56,9 @@ func showUsage() {
 	fmt.Printf("   -timeout int            time to wait in seconds before timeout (default 30)\n\n")
 	
 	fmt.Printf("MODULES:\n")
-	fmt.Printf("   -m, -modules string[]   discovery modules to run (default \"robots,sitemap,paths,katana-lib,patterns\")\n")
-	fmt.Printf("                          Available: httpx-lib,robots,sitemap,paths,katana-lib,javascript,advanced-javascript,patterns\n\n")
+	fmt.Printf("   -m, -modules string[]   discovery modules to run (default \"robots,sitemap,paths,patterns\")\n")
+	fmt.Printf("                          Available: httpx-lib,robots,sitemap,paths,katana-lib*,javascript,advanced-javascript,patterns\n")
+	fmt.Printf("                          *katana-lib: can cause goroutine leaks in bulk scans, use with caution\n\n")
 	
 	fmt.Printf("DEBUG:\n")
 	fmt.Printf("   -v, -verbose           show verbose output\n")
@@ -126,8 +127,9 @@ func main() {
 	flag.Var(&modules, "modules", "")
 	
 	// Default modules if none specified - focused on discovery
+	// Note: katana-lib disabled by default due to goroutine leak issues in bulk scans
 	if len(modules) == 0 {
-		modules = stringSliceFlag{"robots", "sitemap", "paths", "katana-lib", "patterns"}
+		modules = stringSliceFlag{"robots", "sitemap", "paths", "patterns"}
 	}
 	
 	flag.Usage = func() {
