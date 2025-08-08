@@ -1,6 +1,6 @@
 # WebScope
 
-[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/ResistanceIsUseless/webscope/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/ResistanceIsUseless/webscope/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/resistanceisuseless/webscope)](https://goreportcard.com/report/github.com/resistanceisuseless/webscope)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
