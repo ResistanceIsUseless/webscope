@@ -1,21 +1,20 @@
 package modules
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/projectdiscovery/urlfinder/pkg/agent"
-	"github.com/projectdiscovery/urlfinder/pkg/source"
 	"github.com/resistanceisuseless/webscope/pkg/config"
 	"github.com/resistanceisuseless/webscope/pkg/types"
 )
 
 type URLFinderModule struct {
-	agent           *agent.Agent
 	httpx           HTTPXInterface
 	timeout         time.Duration
 	maxEnumTime     time.Duration
@@ -27,7 +26,6 @@ type URLFinderModule struct {
 
 func NewURLFinderModule(timeout time.Duration) *URLFinderModule {
 	return &URLFinderModule{
-		agent:         agent.New(nil, nil, false), // Use default sources
 		httpx:         NewHTTPXLibModule(20, timeout, 10),
 		timeout:       timeout,
 		maxEnumTime:   2 * time.Minute, // Limit enumeration time
@@ -59,7 +57,6 @@ func NewURLFinderModuleWithConfig(timeout time.Duration, appConfig *config.Confi
 	}
 
 	return &URLFinderModule{
-		agent:         agent.New(includeSources, excludeSources, useAllSources),
 		httpx:         NewHTTPXLibModule(20, timeout, rateLimit),
 		timeout:       timeout,
 		maxEnumTime:   maxEnumTime,
@@ -91,70 +88,67 @@ func (u *URLFinderModule) Discover(target types.Target) (*types.DiscoveryResult,
 		return result, fmt.Errorf("failed to extract domain from %s: %v", target.URL, err)
 	}
 
-	// Create a context with timeout for the enumeration
+	// Check if urlfinder CLI is available
+	if _, err := exec.LookPath("urlfinder"); err != nil {
+		return result, fmt.Errorf("urlfinder CLI tool not found in PATH: %v", err)
+	}
+
+	// Build urlfinder command
+	args := []string{"-d", domain, "-silent"}
+	
+	// Add source filters if specified
+	if len(u.includeSources) > 0 {
+		args = append(args, "-sources", strings.Join(u.includeSources, ","))
+	}
+	if len(u.excludeSources) > 0 {
+		args = append(args, "-exclude-sources", strings.Join(u.excludeSources, ","))
+	}
+
+	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), u.maxEnumTime)
 	defer cancel()
 
-	// Channel to collect URLs
-	urlsChan := make(chan string, 1000)
-	errorChan := make(chan error, 1)
+	// Execute urlfinder command
+	cmd := exec.CommandContext(ctx, "urlfinder", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return result, fmt.Errorf("failed to create urlfinder stdout pipe: %v", err)
+	}
 
-	// Start URL enumeration in a goroutine
-	go func() {
-		defer close(urlsChan)
-		defer close(errorChan)
+	if err := cmd.Start(); err != nil {
+		return result, fmt.Errorf("failed to start urlfinder: %v", err)
+	}
 
-		// Use the urlfinder agent to enumerate URLs
-		results := u.agent.EnumerateQueries(domain, "", u.rateLimit, int(u.timeout.Seconds()), u.maxEnumTime)
-
-		for res := range results {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				if res.Type == source.Url && res.Value != "" {
-					// Filter to only include URLs from the target domain
-					if u.isTargetDomain(res.Value, domain) {
-						urlsChan <- res.Value
-					}
-				}
-			}
-		}
-	}()
-
-	// Collect unique URLs
-	urlSet := make(map[string]bool)
+	// Collect URLs from urlfinder output
 	var urls []string
+	urlSet := make(map[string]bool)
+	scanner := bufio.NewScanner(stdout)
 
-	// Collect URLs from the channel with timeout
-	for {
-		select {
-		case <-ctx.Done():
-			// Timeout reached, process what we have
-			goto processResults
-		case urlStr, ok := <-urlsChan:
-			if !ok {
-				// Channel closed, enumeration complete
-				goto processResults
-			}
+	for scanner.Scan() {
+		urlStr := strings.TrimSpace(scanner.Text())
+		if urlStr != "" && u.isTargetDomain(urlStr, domain) {
 			if !urlSet[urlStr] {
 				urlSet[urlStr] = true
 				urls = append(urls, urlStr)
+				
+				// Limit URLs to prevent overwhelming system
+				if len(urls) >= 500 {
+					break
+				}
 			}
-		case err := <-errorChan:
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[URLFinder] Warning: %v\n", err)
-			}
-		}
-
-		// Limit the number of URLs to prevent overwhelming the system
-		if len(urls) >= 500 {
-			break
 		}
 	}
 
-processResults:
-	// Validate discovered URLs using httpx
+	// Wait for command to complete
+	if err := cmd.Wait(); err != nil {
+		// Don't fail the whole discovery if urlfinder has issues
+		// Just log and continue with any URLs we collected
+		if ctx.Err() != context.DeadlineExceeded {
+			fmt.Fprintf(os.Stderr, "[URLFinder] Warning: urlfinder exited with error: %v\n", err)
+		}
+	}
+
+	// Validate discovered URLs using httpx if we found any
 	if len(urls) > 0 {
 		// Process in smaller batches to avoid overwhelming httpx
 		batchSize := 100

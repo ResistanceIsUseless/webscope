@@ -60,10 +60,10 @@ func showUsage() {
 	fmt.Printf("   -m, -modules string[]   discovery modules to run (default \"robots,sitemap,paths,patterns\")\n")
 	fmt.Printf("                          Available modules:\n")
 	fmt.Printf("                            Library-based: httpx-lib, robots, sitemap, paths, javascript,\n")
-	fmt.Printf("                                          advanced-javascript, patterns, urlfinder, katana-lib*\n")
-	fmt.Printf("                            CLI-based: httpx^, katana^\n")
+	fmt.Printf("                                          advanced-javascript, patterns, katana-lib*\n")
+	fmt.Printf("                            CLI-based: httpx^, katana^, urlfinder^\n")
 	fmt.Printf("                          *katana-lib: can cause goroutine leaks in bulk scans, use with caution\n")
-	fmt.Printf("                          ^CLI modules: require external binaries (httpx, katana) in PATH\n\n")
+	fmt.Printf("                          ^CLI modules: require external binaries (httpx, katana, urlfinder) in PATH\n\n")
 	
 	fmt.Printf("DEBUG:\n")
 	fmt.Printf("   -v, -verbose           show verbose output\n")
