@@ -163,7 +163,6 @@ func isDiscoverySource(source string) bool {
 		"robots",           // robots.txt discoveries
 		"robots-common",    // robots.txt common paths  
 		"sitemap",          // sitemap.xml discoveries
-		"urlfinder",        // archive discoveries
 		"javascript",       // JS endpoint discoveries
 		"advanced-javascript", // Advanced JS analysis
 		"katana-lib",       // Crawled discoveries
