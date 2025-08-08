@@ -117,9 +117,9 @@ func NewEngine(config *Config) *Engine {
 			// Deprecated: Use httpx module instead
 			engine.modules = append(engine.modules, modules.NewHTTPModule(config.Timeout))
 		case "robots":
-			engine.modules = append(engine.modules, modules.NewRobotsModuleWithConfig(config.Timeout, config.AppConfig))
+			engine.modules = append(engine.modules, modules.NewRobotsModuleWithConfigAndLibrary(config.Timeout, config.AppConfig))
 		case "paths":
-			engine.modules = append(engine.modules, modules.NewPathsModule(config.Timeout, true, config.AppConfig))
+			engine.modules = append(engine.modules, modules.NewPathsModuleWithLibrary(config.Timeout, true, config.AppConfig))
 		case "javascript", "js":
 			// Pass jsluice config to JavaScript module
 			var jsConfig *appconfig.JSluiceConfig
@@ -128,7 +128,7 @@ func NewEngine(config *Config) *Engine {
 			}
 			engine.modules = append(engine.modules, modules.NewJavaScriptModule(config.Timeout, jsConfig))
 		case "sitemap":
-			engine.modules = append(engine.modules, modules.NewSitemapModuleWithConfig(config.Timeout, config.AppConfig))
+			engine.modules = append(engine.modules, modules.NewSitemapModuleWithConfigAndLibrary(config.Timeout, config.AppConfig))
 		case "katana":
 			// Configure katana module with settings from profile config
 			depth := 3

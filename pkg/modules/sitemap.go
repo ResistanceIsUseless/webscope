@@ -10,7 +10,7 @@ import (
 )
 
 type SitemapModule struct {
-	httpx *HTTPXModule
+	httpx HTTPXInterface
 }
 
 func NewSitemapModule(timeout time.Duration) *SitemapModule {
@@ -35,6 +35,26 @@ func NewSitemapModuleWithConfig(timeout time.Duration, appConfig *config.Config)
 
 	return &SitemapModule{
 		httpx: NewHTTPXModule(threads, timeout, rateLimit),
+	}
+}
+
+// NewSitemapModuleWithConfigAndLibrary creates a sitemap module using httpx library
+func NewSitemapModuleWithConfigAndLibrary(timeout time.Duration, appConfig *config.Config) *SitemapModule {
+	threads := 20
+	rateLimit := 20
+
+	if appConfig != nil {
+		httpxConfig := appConfig.GetDefaultHTTPXConfig()
+		if httpxConfig.Threads > 0 {
+			threads = httpxConfig.Threads
+		}
+		if httpxConfig.RateLimit > 0 {
+			rateLimit = httpxConfig.RateLimit
+		}
+	}
+
+	return &SitemapModule{
+		httpx: NewHTTPXLibModule(threads, timeout, rateLimit),
 	}
 }
 

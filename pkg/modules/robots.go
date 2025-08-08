@@ -10,7 +10,7 @@ import (
 )
 
 type RobotsModule struct {
-	httpx      *HTTPXModule
+	httpx      HTTPXInterface
 	fpDetector *FalsePositiveDetector
 }
 
@@ -41,6 +41,27 @@ func NewRobotsModuleWithConfig(timeout time.Duration, appConfig *config.Config) 
 	}
 }
 
+// NewRobotsModuleWithConfigAndLibrary creates a robots module using httpx library
+func NewRobotsModuleWithConfigAndLibrary(timeout time.Duration, appConfig *config.Config) *RobotsModule {
+	threads := 10
+	rateLimit := 10
+
+	if appConfig != nil {
+		httpxConfig := appConfig.GetDefaultHTTPXConfig()
+		if httpxConfig.Threads > 0 {
+			threads = httpxConfig.Threads
+		}
+		if httpxConfig.RateLimit > 0 {
+			rateLimit = httpxConfig.RateLimit
+		}
+	}
+
+	return &RobotsModule{
+		httpx:      NewHTTPXLibModule(threads, timeout, rateLimit),
+		fpDetector: NewFalsePositiveDetector(timeout, rateLimit),
+	}
+}
+
 func (r *RobotsModule) Name() string {
 	return "robots"
 }
@@ -58,11 +79,13 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 	robotsURL := strings.TrimSuffix(target.URL, "/") + "/robots.txt"
 
 	// Use httpx to check if robots.txt exists
-	httpxResult, err := r.httpx.probeTarget(robotsURL)
-	if err != nil || httpxResult == nil || httpxResult.StatusCode != 200 {
+	httpxResults, err := r.httpx.ProbeBulk([]string{robotsURL})
+	if err != nil || len(httpxResults) == 0 || httpxResults[0].StatusCode != 200 {
 		return result, nil // No robots.txt found
 	}
 
+	httpxResult := httpxResults[0]
+	
 	// Record the robots.txt file itself
 	robotsPath := types.Path{
 		URL:         robotsURL,
@@ -124,9 +147,9 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 	}
 
 	// Probe paths using httpx bulk
-	httpxResults, err := r.httpx.ProbeBulk(urlsToProbe)
+	httpxResults2, err := r.httpx.ProbeBulk(urlsToProbe)
 	if err == nil {
-		for _, httpxRes := range httpxResults {
+		for _, httpxRes := range httpxResults2 {
 			// Accept various status codes as valid discoveries
 			if httpxRes.StatusCode > 0 && httpxRes.StatusCode < 500 {
 				discoveredPath := types.Path{
