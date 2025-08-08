@@ -3,9 +3,7 @@ package modules
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/url"
-	"os"
 	"sync"
 	"time"
 
@@ -178,7 +176,7 @@ func (k *KatanaLibModule) Discover(target wsTypes.Target) (*wsTypes.DiscoveryRes
 	
 	// Configure proxy if available
 	if k.proxyURL != "" {
-		options.Proxy = []string{k.proxyURL}
+		options.Proxy = k.proxyURL
 	} else if k.proxyHawkURL != "" {
 		// Use ProxyHawk as SOCKS5 proxy (default port 1080)
 		if proxyHawkParsed, err := url.Parse(k.proxyHawkURL); err == nil {
@@ -187,7 +185,7 @@ func (k *KatanaLibModule) Discover(target wsTypes.Target) (*wsTypes.DiscoveryRes
 			if proxyHawkParsed.Port() == "8888" {
 				proxyHawkParsed.Host = proxyHawkParsed.Hostname() + ":1080"
 			}
-			options.Proxy = []string{proxyHawkParsed.String()}
+			options.Proxy = proxyHawkParsed.String()
 		}
 	}
 

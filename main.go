@@ -43,6 +43,7 @@ func showUsage() {
 	fmt.Printf("OUTPUT:\n")
 	fmt.Printf("   -o, -output string      output file to write results (default stdout, simple mode)\n")
 	fmt.Printf("   -of, -output-format string output format (jsonl, json) (default \"jsonl\")\n")
+	fmt.Printf("   -ed, -extended-details  include module source and status code in stdout output\n")
 	fmt.Printf("                          Note: simple mode outputs findings only, one per line for piping\n\n")
 	
 	fmt.Printf("CONFIGURATION:\n")
@@ -86,8 +87,9 @@ func main() {
 		inputMode   = flag.String("input-mode", "list", "")
 		
 		// Output flags
-		outputFile   = flag.String("o", "", "")
-		outputFmt    = flag.String("of", "jsonl", "")
+		outputFile      = flag.String("o", "", "")
+		outputFmt       = flag.String("of", "jsonl", "")
+		extendedDetails = flag.Bool("ed", false, "")
 		
 		// Configuration flags
 		configFile   = flag.String("c", "", "")
@@ -112,6 +114,7 @@ func main() {
 	// Set up aliases
 	flag.StringVar(outputFile, "output", "", "")
 	flag.StringVar(outputFmt, "output-format", "jsonl", "")
+	flag.BoolVar(extendedDetails, "extended-details", false, "")
 	flag.StringVar(configFile, "config", "", "")
 	flag.IntVar(threads, "threads", 20, "")
 	flag.IntVar(rateLimit, "rate-limit", 20, "")
@@ -318,7 +321,7 @@ func main() {
 		resultWriter = streamWriter
 	} else {
 		// Use simple writer for stdout with findings only
-		resultWriter = output.NewSimpleWriter()
+		resultWriter = output.NewSimpleWriterWithDetails(*extendedDetails)
 	}
 	defer resultWriter.Close()
 

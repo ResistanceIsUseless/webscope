@@ -2,6 +2,7 @@ package output
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strings"
 
@@ -10,13 +11,23 @@ import (
 
 // SimpleWriter outputs only successful findings, one per line to stdout
 type SimpleWriter struct {
-	writer *bufio.Writer
+	writer          *bufio.Writer
+	extendedDetails bool
 }
 
 // NewSimpleWriter creates a simple writer that outputs findings to stdout
 func NewSimpleWriter() *SimpleWriter {
 	return &SimpleWriter{
-		writer: bufio.NewWriter(os.Stdout),
+		writer:          bufio.NewWriter(os.Stdout),
+		extendedDetails: false,
+	}
+}
+
+// NewSimpleWriterWithDetails creates a simple writer with extended details
+func NewSimpleWriterWithDetails(extendedDetails bool) *SimpleWriter {
+	return &SimpleWriter{
+		writer:          bufio.NewWriter(os.Stdout),
+		extendedDetails: extendedDetails,
 	}
 }
 
@@ -29,16 +40,23 @@ func (sw *SimpleWriter) WriteResult(result types.EngineResult) error {
 	// Output successful paths (200 status codes) - from all discovery modules
 	for _, path := range result.Discovery.Paths {
 		if path.Status >= 200 && path.Status < 400 {
-			sw.writer.WriteString(path.URL + "\n")
+			if sw.extendedDetails {
+				// Format: URL [STATUS:200] [MODULE:httpx-lib]
+				sw.writer.WriteString(fmt.Sprintf("%s [STATUS:%d] [MODULE:%s]\n", 
+					path.URL, path.Status, path.Source))
+			} else {
+				sw.writer.WriteString(path.URL + "\n")
+			}
 		}
 	}
 
 	// Output discovered endpoints - from robots, sitemap, javascript, advanced-javascript
 	for _, endpoint := range result.Discovery.Endpoints {
 		if endpoint.Path != "" && endpoint.Path != "/" {
+			var fullURL string
 			// Construct full URL if we have the target domain
 			if strings.HasPrefix(endpoint.Path, "http") {
-				sw.writer.WriteString(endpoint.Path + "\n")
+				fullURL = endpoint.Path
 			} else {
 				// Build URL from target + path
 				baseURL := result.Target.URL
@@ -48,7 +66,15 @@ func (sw *SimpleWriter) WriteResult(result types.EngineResult) error {
 				if !strings.HasPrefix(endpoint.Path, "/") {
 					endpoint.Path = "/" + endpoint.Path
 				}
-				sw.writer.WriteString(baseURL + endpoint.Path + "\n")
+				fullURL = baseURL + endpoint.Path
+			}
+			
+			if sw.extendedDetails {
+				// For endpoints, show type and source module
+				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:%s] [MODULE:%s]\n",
+					fullURL, endpoint.Type, endpoint.Source))
+			} else {
+				sw.writer.WriteString(fullURL + "\n")
 			}
 		}
 	}
@@ -56,9 +82,10 @@ func (sw *SimpleWriter) WriteResult(result types.EngineResult) error {
 	// Output GraphQL endpoints - from advanced-javascript module
 	for _, schema := range result.Discovery.GraphQLSchemas {
 		if schema.Endpoint != "" {
+			var fullURL string
 			// Construct full URL for GraphQL endpoint
 			if strings.HasPrefix(schema.Endpoint, "http") {
-				sw.writer.WriteString(schema.Endpoint + "\n")
+				fullURL = schema.Endpoint
 			} else {
 				// Build URL from target + endpoint path
 				baseURL := result.Target.URL
@@ -68,7 +95,14 @@ func (sw *SimpleWriter) WriteResult(result types.EngineResult) error {
 				if !strings.HasPrefix(schema.Endpoint, "/") {
 					schema.Endpoint = "/" + schema.Endpoint
 				}
-				sw.writer.WriteString(baseURL + schema.Endpoint + "\n")
+				fullURL = baseURL + schema.Endpoint
+			}
+			
+			if sw.extendedDetails {
+				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:GraphQL] [MODULE:%s]\n",
+					fullURL, schema.Source))
+			} else {
+				sw.writer.WriteString(fullURL + "\n")
 			}
 		}
 	}
@@ -76,16 +110,22 @@ func (sw *SimpleWriter) WriteResult(result types.EngineResult) error {
 	// Output WebSocket endpoints - from advanced-javascript module
 	for _, ws := range result.Discovery.WebSockets {
 		if ws.URL != "" {
-			sw.writer.WriteString(ws.URL + "\n")
+			if sw.extendedDetails {
+				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:WebSocket] [MODULE:%s]\n",
+					ws.URL, ws.Source))
+			} else {
+				sw.writer.WriteString(ws.URL + "\n")
+			}
 		}
 	}
 
 	// Output form action URLs - from httpx-lib, katana-lib modules
 	for _, form := range result.Discovery.Forms {
 		if form.Action != "" && form.Action != "#" {
+			var fullURL string
 			// Construct full URL for form action
 			if strings.HasPrefix(form.Action, "http") {
-				sw.writer.WriteString(form.Action + "\n")
+				fullURL = form.Action
 			} else {
 				// Build URL from target + action path
 				baseURL := result.Target.URL
@@ -95,7 +135,14 @@ func (sw *SimpleWriter) WriteResult(result types.EngineResult) error {
 				if !strings.HasPrefix(form.Action, "/") {
 					form.Action = "/" + form.Action
 				}
-				sw.writer.WriteString(baseURL + form.Action + "\n")
+				fullURL = baseURL + form.Action
+			}
+			
+			if sw.extendedDetails {
+				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:Form-%s] [MODULE:%s]\n",
+					fullURL, form.Method, form.Source))
+			} else {
+				sw.writer.WriteString(fullURL + "\n")
 			}
 		}
 	}
@@ -104,10 +151,20 @@ func (sw *SimpleWriter) WriteResult(result types.EngineResult) error {
 	for _, secret := range result.Discovery.Secrets {
 		// Output high-value secrets that might contain URLs or actionable data
 		if (secret.Type == "url" || secret.Type == "endpoint") && secret.Value != "" {
-			sw.writer.WriteString(secret.Value + "\n")
+			if sw.extendedDetails {
+				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:Secret-%s] [MODULE:%s]\n",
+					secret.Value, secret.Type, secret.Source))
+			} else {
+				sw.writer.WriteString(secret.Value + "\n")
+			}
 		} else if secret.Context != "" && (secret.Strength == "high" || secret.Type == "serialization") {
 			// Output pattern match context for high-value findings
-			sw.writer.WriteString(secret.Context + "\n")
+			if sw.extendedDetails {
+				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:Pattern-%s] [MODULE:%s]\n",
+					secret.Context, secret.Type, secret.Source))
+			} else {
+				sw.writer.WriteString(secret.Context + "\n")
+			}
 		}
 	}
 
@@ -115,10 +172,20 @@ func (sw *SimpleWriter) WriteResult(result types.EngineResult) error {
 	for _, finding := range result.Discovery.Findings {
 		if finding.Priority == "critical" || finding.Priority == "high" {
 			if finding.URL != "" {
-				sw.writer.WriteString(finding.URL + "\n")
+				if sw.extendedDetails {
+					sw.writer.WriteString(fmt.Sprintf("%s [PRIORITY:%s] [CATEGORY:%s] [MODULE:%s]\n",
+						finding.URL, finding.Priority, finding.Category, finding.Source))
+				} else {
+					sw.writer.WriteString(finding.URL + "\n")
+				}
 			} else if finding.Evidence != "" {
 				// Output evidence for serialization, secrets, and other actionable patterns
-				sw.writer.WriteString(finding.Evidence + "\n")
+				if sw.extendedDetails {
+					sw.writer.WriteString(fmt.Sprintf("%s [PRIORITY:%s] [CATEGORY:%s] [MODULE:%s]\n",
+						finding.Evidence, finding.Priority, finding.Category, finding.Source))
+				} else {
+					sw.writer.WriteString(finding.Evidence + "\n")
+				}
 			}
 		}
 	}
