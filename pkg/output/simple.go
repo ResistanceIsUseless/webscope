@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
+	"github.com/resistanceisuseless/webscope/pkg/config"
 	"github.com/resistanceisuseless/webscope/pkg/types"
 )
 
@@ -13,21 +15,57 @@ import (
 type SimpleWriter struct {
 	writer          *bufio.Writer
 	extendedDetails bool
+	allowedStatuses map[int]bool
 }
 
 // NewSimpleWriter creates a simple writer that outputs findings to stdout
 func NewSimpleWriter() *SimpleWriter {
+	// Default allowed statuses for backward compatibility
+	defaultStatuses := map[int]bool{200: true, 401: true}
 	return &SimpleWriter{
 		writer:          bufio.NewWriter(os.Stdout),
 		extendedDetails: false,
+		allowedStatuses: defaultStatuses,
 	}
 }
 
 // NewSimpleWriterWithDetails creates a simple writer with extended details
 func NewSimpleWriterWithDetails(extendedDetails bool) *SimpleWriter {
+	// Default allowed statuses for backward compatibility  
+	defaultStatuses := map[int]bool{200: true, 401: true}
 	return &SimpleWriter{
 		writer:          bufio.NewWriter(os.Stdout),
 		extendedDetails: extendedDetails,
+		allowedStatuses: defaultStatuses,
+	}
+}
+
+// NewSimpleWriterWithConfig creates a simple writer with configuration
+func NewSimpleWriterWithConfig(extendedDetails bool, appConfig *config.Config) *SimpleWriter {
+	allowedStatuses := make(map[int]bool)
+	
+	// Get status codes from config
+	if appConfig != nil {
+		httpxConfig := appConfig.GetDefaultHTTPXConfig()
+		if len(httpxConfig.StatusCodes) > 0 {
+			for _, statusStr := range httpxConfig.StatusCodes {
+				if status, err := strconv.Atoi(statusStr); err == nil {
+					allowedStatuses[status] = true
+				}
+			}
+		}
+	}
+	
+	// If no config provided, use defaults (200, 401 only - success and auth required)
+	if len(allowedStatuses) == 0 {
+		allowedStatuses[200] = true
+		allowedStatuses[401] = true
+	}
+	
+	return &SimpleWriter{
+		writer:          bufio.NewWriter(os.Stdout),
+		extendedDetails: extendedDetails,
+		allowedStatuses: allowedStatuses,
 	}
 }
 
@@ -37,157 +75,71 @@ func (sw *SimpleWriter) WriteResult(result types.EngineResult) error {
 		return nil // Skip failed results silently
 	}
 
-	// Output successful paths (200 status codes) - from all discovery modules
+	// Output only validated successful paths - from discovery modules (not path bruteforcing)
 	for _, path := range result.Discovery.Paths {
-		if path.Status >= 200 && path.Status < 400 {
-			if sw.extendedDetails {
-				// Format: URL [STATUS:200] [MODULE:httpx-lib]
-				sw.writer.WriteString(fmt.Sprintf("%s [STATUS:%d] [MODULE:%s]\n", 
-					path.URL, path.Status, path.Source))
-			} else {
-				sw.writer.WriteString(path.URL + "\n")
+		// Check if status is allowed by configuration
+		if sw.allowedStatuses[path.Status] {
+			// Only include actual discoveries, not bruteforce attempts
+			if isDiscoverySource(path.Source) {
+				if sw.extendedDetails {
+					// Ensure we have a source, fallback to "unknown"
+					source := path.Source
+					if source == "" {
+						source = "unknown"
+					}
+					// Format: URL [STATUS:200] [MODULE:robots]
+					sw.writer.WriteString(fmt.Sprintf("%s [STATUS:%d] [MODULE:%s]\n", 
+						path.URL, path.Status, source))
+				} else {
+					sw.writer.WriteString(path.URL + "\n")
+				}
 			}
 		}
 	}
 
-	// Output discovered endpoints - from robots, sitemap, javascript, advanced-javascript
-	for _, endpoint := range result.Discovery.Endpoints {
-		if endpoint.Path != "" && endpoint.Path != "/" {
-			var fullURL string
-			// Construct full URL if we have the target domain
-			if strings.HasPrefix(endpoint.Path, "http") {
-				fullURL = endpoint.Path
-			} else {
-				// Build URL from target + path
-				baseURL := result.Target.URL
-				if strings.HasSuffix(baseURL, "/") {
-					baseURL = strings.TrimSuffix(baseURL, "/")
-				}
-				if !strings.HasPrefix(endpoint.Path, "/") {
-					endpoint.Path = "/" + endpoint.Path
-				}
-				fullURL = baseURL + endpoint.Path
-			}
-			
-			if sw.extendedDetails {
-				// For endpoints, show type and source module
-				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:%s] [MODULE:%s]\n",
-					fullURL, endpoint.Type, endpoint.Source))
-			} else {
-				sw.writer.WriteString(fullURL + "\n")
-			}
-		}
-	}
+	// Skip endpoints - these are unvalidated discovered paths
+	// Only output validated paths that have been HTTP-tested above
 
-	// Output GraphQL endpoints - from advanced-javascript module
-	for _, schema := range result.Discovery.GraphQLSchemas {
-		if schema.Endpoint != "" {
-			var fullURL string
-			// Construct full URL for GraphQL endpoint
-			if strings.HasPrefix(schema.Endpoint, "http") {
-				fullURL = schema.Endpoint
-			} else {
-				// Build URL from target + endpoint path
-				baseURL := result.Target.URL
-				if strings.HasSuffix(baseURL, "/") {
-					baseURL = strings.TrimSuffix(baseURL, "/")
-				}
-				if !strings.HasPrefix(schema.Endpoint, "/") {
-					schema.Endpoint = "/" + schema.Endpoint
-				}
-				fullURL = baseURL + schema.Endpoint
-			}
-			
-			if sw.extendedDetails {
-				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:GraphQL] [MODULE:%s]\n",
-					fullURL, schema.Source))
-			} else {
-				sw.writer.WriteString(fullURL + "\n")
-			}
-		}
-	}
+	// Skip GraphQL endpoints - these are unvalidated discovered endpoints
+	// They should be validated separately if needed
 
-	// Output WebSocket endpoints - from advanced-javascript module
-	for _, ws := range result.Discovery.WebSockets {
-		if ws.URL != "" {
-			if sw.extendedDetails {
-				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:WebSocket] [MODULE:%s]\n",
-					ws.URL, ws.Source))
-			} else {
-				sw.writer.WriteString(ws.URL + "\n")
-			}
-		}
-	}
+	// Skip WebSocket endpoints - these are typically unvalidated discovered endpoints
 
-	// Output form action URLs - from httpx-lib, katana-lib modules
-	for _, form := range result.Discovery.Forms {
-		if form.Action != "" && form.Action != "#" {
-			var fullURL string
-			// Construct full URL for form action
-			if strings.HasPrefix(form.Action, "http") {
-				fullURL = form.Action
-			} else {
-				// Build URL from target + action path
-				baseURL := result.Target.URL
-				if strings.HasSuffix(baseURL, "/") {
-					baseURL = strings.TrimSuffix(baseURL, "/")
-				}
-				if !strings.HasPrefix(form.Action, "/") {
-					form.Action = "/" + form.Action
-				}
-				fullURL = baseURL + form.Action
-			}
-			
-			if sw.extendedDetails {
-				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:Form-%s] [MODULE:%s]\n",
-					fullURL, form.Method, form.Source))
-			} else {
-				sw.writer.WriteString(fullURL + "\n")
-			}
-		}
-	}
+	// Skip form action URLs - these are constructed, not discovered
 
-	// Output secrets/patterns with actionable context - from patterns module
+	// Output secrets/patterns with actionable context - only URLs that are validated
 	for _, secret := range result.Discovery.Secrets {
-		// Output high-value secrets that might contain URLs or actionable data
-		if (secret.Type == "url" || secret.Type == "endpoint") && secret.Value != "" {
+		// Only output URL-type secrets that are actual URLs
+		if secret.Type == "url" && secret.Value != "" && strings.HasPrefix(secret.Value, "http") {
 			if sw.extendedDetails {
+				source := secret.Source
+				if source == "" {
+					source = "unknown"
+				}
 				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:Secret-%s] [MODULE:%s]\n",
-					secret.Value, secret.Type, secret.Source))
+					secret.Value, secret.Type, source))
 			} else {
 				sw.writer.WriteString(secret.Value + "\n")
 			}
-		} else if secret.Context != "" && (secret.Strength == "high" || secret.Type == "serialization") {
-			// Output pattern match context for high-value findings
-			if sw.extendedDetails {
-				sw.writer.WriteString(fmt.Sprintf("%s [TYPE:Pattern-%s] [MODULE:%s]\n",
-					secret.Context, secret.Type, secret.Source))
-			} else {
-				sw.writer.WriteString(secret.Context + "\n")
-			}
 		}
+		// Skip non-URL secrets from simple output as they're not actionable URLs
 	}
 
-	// Output critical and high priority interesting findings - from patterns, findings modules
+	// Output critical and high priority interesting findings - only those with URLs
 	for _, finding := range result.Discovery.Findings {
-		if finding.Priority == "critical" || finding.Priority == "high" {
-			if finding.URL != "" {
-				if sw.extendedDetails {
-					sw.writer.WriteString(fmt.Sprintf("%s [PRIORITY:%s] [CATEGORY:%s] [MODULE:%s]\n",
-						finding.URL, finding.Priority, finding.Category, finding.Source))
-				} else {
-					sw.writer.WriteString(finding.URL + "\n")
+		if (finding.Priority == "critical" || finding.Priority == "high") && finding.URL != "" {
+			if sw.extendedDetails {
+				source := finding.Source
+				if source == "" {
+					source = "unknown"
 				}
-			} else if finding.Evidence != "" {
-				// Output evidence for serialization, secrets, and other actionable patterns
-				if sw.extendedDetails {
-					sw.writer.WriteString(fmt.Sprintf("%s [PRIORITY:%s] [CATEGORY:%s] [MODULE:%s]\n",
-						finding.Evidence, finding.Priority, finding.Category, finding.Source))
-				} else {
-					sw.writer.WriteString(finding.Evidence + "\n")
-				}
+				sw.writer.WriteString(fmt.Sprintf("%s [PRIORITY:%s] [CATEGORY:%s] [MODULE:%s]\n",
+					finding.URL, finding.Priority, finding.Category, source))
+			} else {
+				sw.writer.WriteString(finding.URL + "\n")
 			}
 		}
+		// Skip findings without URLs from simple output
 	}
 
 	// Flush after each result to ensure output appears immediately
@@ -202,4 +154,43 @@ func (sw *SimpleWriter) Close() error {
 // GetStatistics returns empty stats for simple mode
 func (sw *SimpleWriter) GetStatistics() types.Statistics {
 	return types.Statistics{}
+}
+
+// isDiscoverySource checks if the source represents actual discovery vs bruteforcing
+func isDiscoverySource(source string) bool {
+	// Only include sources that represent actual discoveries
+	discoveryModules := []string{
+		"robots",           // robots.txt discoveries
+		"robots-common",    // robots.txt common paths  
+		"sitemap",          // sitemap.xml discoveries
+		"urlfinder",        // archive discoveries
+		"javascript",       // JS endpoint discoveries
+		"advanced-javascript", // Advanced JS analysis
+		"katana-lib",       // Crawled discoveries
+		"httpx-lib",        // Direct HTTP validation (not paths module)
+	}
+	
+	// Exclude path bruteforcing modules
+	excludeModules := []string{
+		"paths-httpx",      // Path bruteforcing
+		"paths-variation",  // Path variation attempts
+		"paths",            // General path bruteforcing
+	}
+	
+	// Check if source is excluded
+	for _, exclude := range excludeModules {
+		if strings.Contains(source, exclude) {
+			return false
+		}
+	}
+	
+	// Check if source is from discovery modules
+	for _, module := range discoveryModules {
+		if strings.Contains(source, module) {
+			return true
+		}
+	}
+	
+	// Unknown sources are excluded by default
+	return false
 }

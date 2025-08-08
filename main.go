@@ -320,8 +320,8 @@ func main() {
 		}
 		resultWriter = streamWriter
 	} else {
-		// Use simple writer for stdout with findings only
-		resultWriter = output.NewSimpleWriterWithDetails(*extendedDetails)
+		// Use simple writer for stdout with findings only, using config for status filtering
+		resultWriter = output.NewSimpleWriterWithConfig(*extendedDetails, appConfig)
 	}
 	defer resultWriter.Close()
 
