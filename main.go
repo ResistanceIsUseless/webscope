@@ -1,422 +1,361 @@
+// WebScope v2 - Complete rewrite with zero goroutine leaks
+// Philosophy: One goroutine per HTTP request, aggressive timeouts, no leaks
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/resistanceisuseless/webscope/pkg/config"
+	"github.com/resistanceisuseless/webscope/pkg/analysis"
+	"github.com/resistanceisuseless/webscope/pkg/crawl"
 	"github.com/resistanceisuseless/webscope/pkg/discovery"
-	"github.com/resistanceisuseless/webscope/pkg/input"
-	"github.com/resistanceisuseless/webscope/pkg/output"
-	"github.com/resistanceisuseless/webscope/pkg/types"
+	"github.com/resistanceisuseless/webscope/pkg/http"
 )
 
 const (
-	appVersion = "1.2.0"
+	appVersion = "2.0.0"
+	appName    = "WebScope"
 )
-
-func showBanner() {
-	fmt.Printf("WebScope - Web Content Discovery Tool v%s\n", appVersion)
-	fmt.Printf("https://github.com/ResistanceIsUseless/webscope\n\n")
-}
-
-func showUsage() {
-	fmt.Printf("Usage:\n")
-	fmt.Printf("  webscope [flags]\n\n")
-	
-	fmt.Printf("FLAGS:\n")
-	fmt.Printf("INPUT:\n")
-	fmt.Printf("   -l, -list string[]      path to file containing a list of target URLs/hosts to scan (one per line)\n")
-	fmt.Printf("   -u, -target string[]    target URLs/hosts to scan\n")
-	fmt.Printf("   -resume string          resume scan using resume.cfg\n\n")
-	
-	fmt.Printf("INPUT-FORMAT:\n")
-	fmt.Printf("   -im, -input-mode string mode of input file (list, nmap, json) (default \"list\")\n\n")
-	
-	fmt.Printf("OUTPUT:\n")
-	fmt.Printf("   -o, -output string      output file to write results (default stdout, simple mode)\n")
-	fmt.Printf("   -of, -output-format string output format (jsonl, json) (default \"jsonl\")\n")
-	fmt.Printf("   -ed, -extended-details  include module source and status code in stdout output\n")
-	fmt.Printf("                          Note: simple mode outputs findings only, one per line for piping\n\n")
-	
-	fmt.Printf("CONFIGURATION:\n")
-	fmt.Printf("   -c, -config string      path to configuration file\n")
-	fmt.Printf("   -profile string         scanning profile to use (stealth, normal, aggressive, thorough) (default \"normal\")\n")
-	fmt.Printf("   -lp, -list-profiles     list available scanning profiles\n\n")
-	
-	fmt.Printf("RATE-CONTROL:\n")
-	fmt.Printf("   -t, -threads int        number of concurrent threads (default 20)\n")
-	fmt.Printf("   -rl, -rate-limit int    maximum number of requests to send per second (default 20)\n")
-	fmt.Printf("   -timeout int            time to wait in seconds before timeout (default 30)\n\n")
-	
-	fmt.Printf("MODULES:\n")
-	fmt.Printf("   -m, -modules string[]   discovery modules to run (default \"robots,sitemap,paths,patterns\")\n")
-	fmt.Printf("                          Available modules:\n")
-	fmt.Printf("                            Library-based: httpx-lib, robots, sitemap, paths, javascript,\n")
-	fmt.Printf("                                          advanced-javascript, patterns, katana-lib*\n")
-	fmt.Printf("                            CLI-based: httpx^, katana^, urlfinder^\n")
-	fmt.Printf("                          *katana-lib: can cause goroutine leaks in bulk scans, use with caution\n")
-	fmt.Printf("                          ^CLI modules: require external binaries (httpx, katana, urlfinder) in PATH\n\n")
-	
-	fmt.Printf("DEBUG:\n")
-	fmt.Printf("   -v, -verbose           show verbose output\n")
-	fmt.Printf("   -debug                 show debug output\n")
-	fmt.Printf("   -s, -silent            show only results in output\n")
-	fmt.Printf("   -version               show version of the project\n")
-}
-
-type stringSliceFlag []string
-
-func (s *stringSliceFlag) String() string {
-	return strings.Join(*s, ",")
-}
-
-func (s *stringSliceFlag) Set(value string) error {
-	*s = append(*s, strings.Split(value, ",")...)
-	return nil
-}
 
 func main() {
 	var (
-		// Input flags
-		targets     stringSliceFlag
-		inputFiles  stringSliceFlag
-		inputMode   = flag.String("input-mode", "list", "")
-		
-		// Output flags
-		outputFile      = flag.String("o", "", "")
-		outputFmt       = flag.String("of", "jsonl", "")
-		extendedDetails = flag.Bool("ed", false, "")
-		
-		// Configuration flags
-		configFile   = flag.String("c", "", "")
-		profile      = flag.String("profile", "normal", "")
-		listProfiles = flag.Bool("list-profiles", false, "")
-		
-		// Rate control flags
-		threads     = flag.Int("t", 20, "")
-		rateLimit   = flag.Int("rl", 20, "")
-		timeout     = flag.Int("timeout", 30, "")
-		
-		// Module flags
-		modules     stringSliceFlag
-		
-		// Debug flags
-		verbose     = flag.Bool("v", false, "")
-		silent      = flag.Bool("s", false, "")
-		version     = flag.Bool("version", false, "")
-		showHelp    = flag.Bool("h", false, "")
+		flowType    string
+		target      string
+		timeout     int
+		rateLimit   int
+		maxDepth    int
+		maxRequests int
+		wordlist    string
+		verbose     bool
+		version     bool
 	)
-	
-	// Set up aliases
-	flag.StringVar(outputFile, "output", "", "")
-	flag.StringVar(outputFmt, "output-format", "jsonl", "")
-	flag.BoolVar(extendedDetails, "extended-details", false, "")
-	flag.StringVar(configFile, "config", "", "")
-	flag.IntVar(threads, "threads", 20, "")
-	flag.IntVar(rateLimit, "rate-limit", 20, "")
-	flag.BoolVar(verbose, "verbose", false, "")
-	flag.BoolVar(silent, "silent", false, "")
-	flag.BoolVar(listProfiles, "lp", false, "")
-	flag.StringVar(inputMode, "im", "list", "")
-	flag.Var(&targets, "u", "")
-	flag.Var(&targets, "target", "")
-	flag.Var(&inputFiles, "l", "")
-	flag.Var(&inputFiles, "list", "")
-	flag.Var(&modules, "m", "")
-	flag.Var(&modules, "modules", "")
-	
-	// Default modules if none specified - focused on discovery
-	// Note: katana-lib disabled by default due to goroutine leak issues in bulk scans
-	if len(modules) == 0 {
-		modules = stringSliceFlag{"robots", "sitemap", "paths", "patterns"}
-	}
-	
+
+	// Parse command line flags
+	flag.StringVar(&flowType, "flow", "in-depth", "Discovery flow: quick, in-depth, intense")
+	flag.StringVar(&target, "target", "", "Target URL to scan")
+	flag.IntVar(&timeout, "timeout", 2, "HTTP timeout in seconds (default: 2)")
+	flag.IntVar(&rateLimit, "rate", 10, "Requests per second (default: 10)")
+	flag.IntVar(&maxDepth, "depth", 2, "Max crawl depth (for crawl flow)")
+	flag.IntVar(&maxRequests, "max-requests", 100, "Max requests (for crawl flow)")
+	flag.StringVar(&wordlist, "wordlist", "", "Custom wordlist for deep flow")
+	flag.BoolVar(&verbose, "v", false, "Verbose output")
+	flag.BoolVar(&version, "version", false, "Show version")
+
 	flag.Usage = func() {
-		showBanner()
-		showUsage()
+		fmt.Fprintf(os.Stderr, "WebScope v%s - Static Web Content Analysis Tool\n", appVersion)
+		fmt.Fprintf(os.Stderr, "Zero goroutine leaks, aggressive timeouts, controlled discovery\n\n")
+		fmt.Fprintf(os.Stderr, "Usage:\n")
+		fmt.Fprintf(os.Stderr, "  webscope -target https://example.com -flow in-depth\n")
+		fmt.Fprintf(os.Stderr, "  echo 'https://example.com' | webscope -flow intense\n\n")
+		fmt.Fprintf(os.Stderr, "Discovery Flows:\n")
+		fmt.Fprintf(os.Stderr, "  quick    - robots.txt + sitemap.xml + basic paths\n")
+		fmt.Fprintf(os.Stderr, "  in-depth - Default: + urlfinder + katana + jsluice analysis\n")
+		fmt.Fprintf(os.Stderr, "  intense  - + larger paths + deep katana + pattern analysis\n")
+		fmt.Fprintf(os.Stderr, "             + GraphQL + WebSocket + smart variations\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		flag.PrintDefaults()
 	}
-	
+
 	flag.Parse()
-	
-	if *showHelp {
-		flag.Usage()
-		return
-	}
-	
-	if *version {
-		fmt.Printf("webscope version %s\n", appVersion)
-		return
+
+	if version {
+		fmt.Printf("WebScope v%s\n", appVersion)
+		os.Exit(0)
 	}
 
-	ctx := context.Background()
-
-	// Determine if we're using simple mode (stdout findings only)  
-	// Simple mode when: no output file specified AND output format is default jsonl
-	usingSimpleMode := *outputFile == "" && *outputFmt == "jsonl"
-
-	// Load configuration
-	var appConfig *config.Config
-	var configLoaded bool
-	var configPath string
-
-	if *configFile != "" {
-		var err error
-		appConfig, err = config.Load(*configFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[ERROR] Error loading config file: %v\n", err)
+	// Get target from flag or stdin
+	if target == "" {
+		// Read from stdin
+		var input string
+		if _, err := fmt.Scanln(&input); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: No target provided\n")
+			flag.Usage()
 			os.Exit(1)
 		}
-		configLoaded = true
-		configPath = *configFile
-	} else {
-		// Try default config paths
-		for _, defaultPath := range config.GetDefaultConfigPaths() {
-			if _, err := os.Stat(defaultPath); err == nil {
-				appConfig, _ = config.Load(defaultPath)
-				if appConfig != nil {
-					configLoaded = true
-					configPath = defaultPath
-					break
-				}
-			}
-		}
+		target = strings.TrimSpace(input)
 	}
 
-	// Always initialize config if not loaded
-	if appConfig == nil {
-		appConfig = &config.Config{}
+	// Ensure target has protocol
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "https://" + target
 	}
 
-	// Always inform about config status unless silent or simple mode
-	if !*silent && !usingSimpleMode {
-		if configLoaded {
-			fmt.Fprintf(os.Stderr, "[INFO] Loaded config from: %s\n", configPath)
-		} else {
-			fmt.Fprintf(os.Stderr, "[INFO] No config file loaded, using defaults\n")
-		}
+	// Create HTTP client with aggressive timeouts
+	clientConfig := http.ClientConfig{
+		Timeout:           time.Duration(timeout) * time.Second,
+		RateLimit:         rateLimit,
+		MaxRetries:        1,
+		MaxResponseSize:   10 * 1024 * 1024,
+		DisableKeepAlives: true, // Prevent connection pool issues
+		UserAgent:         fmt.Sprintf("%s/%s", appName, appVersion),
 	}
 
-	// Handle profile listing
-	if *listProfiles {
-		fmt.Printf("Available Scanning Profiles:\n\n")
-		
-		profiles := appConfig.GetProfiles()
-		if len(profiles) > 0 {
-			for _, profileName := range profiles {
-				if profileConfig, exists := appConfig.GetProfile(profileName); exists {
-					fmt.Printf("  %s: %s\n", profileName, profileConfig.Description)
-				}
-			}
-		} else {
-			fmt.Printf("No profiles configured. Use config.example.yaml as a template.\n")
-			fmt.Printf("Default profiles: stealth, normal, aggressive, thorough\n")
-		}
-		return
-	}
-
-	// Determine input source
-	var inputReader io.Reader
-	var inputFile string
-	
-	if len(targets) > 0 {
-		// Create temporary input from targets
-		inputReader = strings.NewReader(strings.Join(targets, "\n"))
-		inputFile = ""
-	} else if len(inputFiles) > 0 {
-		// Use first file from list
-		file, err := os.Open(inputFiles[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[ERROR] Error opening input file: %v\n", err)
-			os.Exit(1)
-		}
-		defer file.Close()
-		inputReader = file
-		inputFile = inputFiles[0]
-	} else {
-		// Default to stdin if no input specified
-		inputReader = os.Stdin
-		inputFile = ""
-	}
-
-	inputHandler := input.NewHandler()
-	parsedTargets, err := inputHandler.ParseInput(inputReader, inputFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] Error parsing input: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Always show target count unless silent or using simple mode
-	if !*silent && !usingSimpleMode {
-		fmt.Fprintf(os.Stderr, "[INFO] Loaded %d targets\n", len(parsedTargets))
-	}
-
-	if len(parsedTargets) == 0 {
-		fmt.Fprintf(os.Stderr, "No targets found. Usage examples:\n")
-		fmt.Fprintf(os.Stderr, "  echo 'https://example.com' | webscope\n")
-		fmt.Fprintf(os.Stderr, "  echo 'example.com:443' | webscope\n")
-		fmt.Fprintf(os.Stderr, "  webscope -l targets.txt\n")
-		fmt.Fprintf(os.Stderr, "  webscope -u https://example.com\n")
-		fmt.Fprintf(os.Stderr, "  webscope -l nmap_results.xml\n")
-		return
-	}
-
-	// Get the selected profile configuration
-	selectedProfile, profileExists := appConfig.GetProfile(*profile)
-	if !profileExists && *profile != "normal" {
-		if !*silent {
-			fmt.Fprintf(os.Stderr, "[WARN] Profile '%s' not found, using defaults\n", *profile)
-		}
-	}
-
-	// Use profile settings or CLI overrides
-	finalWorkers := *threads
-	if profileExists && finalWorkers == 20 { // default value
-		if selectedProfile.GlobalLimit > 0 {
-			finalWorkers = selectedProfile.GlobalLimit
-		}
-	}
-
-	finalTimeout := time.Duration(*timeout) * time.Second
-	if profileExists && *timeout == 30 { // default value
-		if selectedProfile.HTTPX.Timeout > 0 {
-			finalTimeout = time.Duration(selectedProfile.HTTPX.Timeout) * time.Second
-		}
-	}
-
-	finalRateLimit := *rateLimit
-	if profileExists && finalRateLimit == 20 { // default value
-		if selectedProfile.GlobalLimit > 0 {
-			finalRateLimit = selectedProfile.GlobalLimit
-		}
-	}
-
-	discoveryConfig := &discovery.Config{
-		Workers:   finalWorkers,
-		Timeout:   finalTimeout,
-		RateLimit: finalRateLimit,
-		Modules:   []string(modules),
-		Verbose:   *verbose,
-		AppConfig: appConfig,
-		Profile:   *profile,
-	}
-
-	// Create output writer based on mode determined earlier
-	var resultWriter interface {
-		WriteResult(result types.EngineResult) error
-		Close() error
-		GetStatistics() types.Statistics
-	}
-
-	if !usingSimpleMode {
-		// Use streaming writer for file output or when JSON format explicitly requested
-		streamWriter, err := output.NewStreamingWriter(*outputFile, *outputFmt)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[ERROR] Error creating output writer: %v\n", err)
-			os.Exit(1)
-		}
-		resultWriter = streamWriter
-	} else {
-		// Use simple writer for stdout with findings only, using config for status filtering
-		resultWriter = output.NewSimpleWriterWithConfig(*extendedDetails, appConfig)
-	}
-	defer resultWriter.Close()
+	client := http.NewClient(clientConfig)
+	defer client.Shutdown()
 
 	// Setup signal handling for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Create a cancellable context
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Handle signals
 	go func() {
 		<-sigChan
-		if !*silent {
-			fmt.Fprintf(os.Stderr, "\n[WARN] Received interrupt signal, saving partial results...\n")
+		if verbose {
+			fmt.Fprintf(os.Stderr, "\nReceived interrupt signal, shutting down gracefully...\n")
 		}
 		cancel()
 	}()
 
-	// Show discovery start
-	if !*silent && !usingSimpleMode {
-		fmt.Fprintf(os.Stderr, "[INFO] Starting discovery with modules: %s\n", strings.Join(modules, ","))
-		fmt.Fprintf(os.Stderr, "[INFO] Workers: %d, Rate limit: %d/s, Timeout: %s\n", finalWorkers, finalRateLimit, finalTimeout)
+	// Execute the selected flow
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Starting %s flow for %s\n", flowType, target)
 	}
 
-	engine := discovery.NewEngine(discoveryConfig)
-	results := engine.Discover(ctx, parsedTargets)
+	start := time.Now()
+	var result *discovery.Result
+	var err error
 
-	// Simple progress counter for non-verbose mode
-	processedCount := 0
-	lastProgressTime := time.Now()
+	switch discovery.FlowType(flowType) {
+	case discovery.QuickFlow:
+		// Quick flow: robots.txt + sitemap.xml + basic paths
+		flow := discovery.NewBasicFlow(client)
+		result, err = flow.Execute(ctx, target)
 
-	// Show initial progress
-	if !*silent && !usingSimpleMode {
-		fmt.Fprintf(os.Stderr, "[INFO] Processing targets...\n")
-	}
+	case discovery.InDepthFlow:
+		// In-depth flow: Default comprehensive scan
+		flow := discovery.NewStandardFlow(client)
+		result, err = flow.Execute(ctx, target)
 
-	for result := range results {
-		processedCount++
-
-		// Show basic progress every 10 seconds in non-verbose mode
-		if !*verbose && !*silent && !usingSimpleMode && time.Since(lastProgressTime) > 10*time.Second {
-			fmt.Fprintf(os.Stderr, "[INFO] Progress: %d/%d targets processed...\n", processedCount, len(parsedTargets))
-			lastProgressTime = time.Now()
-		}
-
-		if result.Error != nil {
-			if *verbose {
-				fmt.Fprintf(os.Stderr, "[ERROR] Error processing %s: %v\n", result.Target.URL, result.Error)
+		// Add crawling for in-depth
+		if err == nil {
+			crawlerConfig := crawl.CrawlerConfig{
+				MaxDepth:    2,
+				MaxRequests: 50, // Moderate crawling
 			}
-			continue
-		}
+			crawler := crawl.NewCrawler(client, crawlerConfig)
+			crawlResult, crawlErr := crawler.Crawl(ctx, target, 2)
 
-		// Write result immediately to prevent data loss
-		if err := resultWriter.WriteResult(result); err != nil {
-			if !usingSimpleMode {
-				fmt.Fprintf(os.Stderr, "[ERROR] Error writing result for %s: %v\n", result.Target.Domain, err)
-			}
-		}
-	}
+			if crawlErr == nil && crawlResult != nil {
+				// Add crawled pages to result
+				for _, page := range crawlResult.Pages {
+					result.Paths = append(result.Paths, discovery.Path{
+						URL:         page.URL,
+						Status:      page.StatusCode,
+						ContentType: page.ContentType,
+						Title:       page.Title,
+						Source:      "katana",
+					})
+				}
 
-	// Get final statistics
-	stats := resultWriter.GetStatistics()
-
-	// Show completion status and statistics unless silent or using simple mode
-	if !*silent && !usingSimpleMode {
-		fmt.Fprintf(os.Stderr, "[INFO] Discovery complete: %d targets processed\n", processedCount)
-		fmt.Fprintf(os.Stderr, "[INFO] Results: %d paths, %d endpoints, %d secrets, %d findings discovered\n",
-			stats.TotalPaths, stats.TotalEndpoints, stats.TotalSecrets, stats.TotalFindings)
-		
-		// Show findings summary if we have interesting findings
-		if stats.TotalFindings > 0 {
-			fmt.Fprintf(os.Stderr, "[INFO] Interesting findings summary:\n")
-			if len(stats.CriticalFindings) > 0 {
-				fmt.Fprintf(os.Stderr, "[WARN]   - Critical: %d findings (requires immediate attention)\n", len(stats.CriticalFindings))
-			}
-			if len(stats.HighPriorityFindings) > 0 {
-				fmt.Fprintf(os.Stderr, "[INFO]   - High priority: %d findings (review recommended)\n", len(stats.HighPriorityFindings))
-			}
-			if stats.FindingsByCategory != nil {
-				for category, count := range stats.FindingsByCategory {
-					if category == "secrets" || category == "serialization" {
-						fmt.Fprintf(os.Stderr, "[INFO]   - %s: %d findings\n", category, count)
-					}
+				if verbose {
+					fmt.Fprintf(os.Stderr, "Crawled %d pages in %v\n", crawlResult.RequestsCount, crawlResult.CrawlTime)
 				}
 			}
 		}
 
-		if *outputFile != "" {
-			fmt.Fprintf(os.Stderr, "[INFO] Output saved to: %s\n", *outputFile)
+	case discovery.IntenseFlow:
+		// Intense flow: Maximum coverage with larger wordlists
+		var wordlistData []string
+		if wordlist != "" {
+			// Load custom wordlist
+			wordlistData = loadWordlist(wordlist)
+		}
+		
+		// Start with deep flow (includes smart variations)
+		flow := discovery.NewDeepFlow(client, wordlistData)
+		result, err = flow.Execute(ctx, target)
+
+		// Add deep crawling for intense
+		if err == nil {
+			crawlerConfig := crawl.CrawlerConfig{
+				MaxDepth:    maxDepth,
+				MaxRequests: maxRequests,
+			}
+			crawler := crawl.NewCrawler(client, crawlerConfig)
+			crawlResult, crawlErr := crawler.Crawl(ctx, target, maxDepth)
+
+			if crawlErr == nil && crawlResult != nil {
+				// Add crawled pages to result
+				for _, page := range crawlResult.Pages {
+					result.Paths = append(result.Paths, discovery.Path{
+						URL:         page.URL,
+						Status:      page.StatusCode,
+						ContentType: page.ContentType,
+						Title:       page.Title,
+						Source:      "deep-katana",
+					})
+				}
+
+				// Add discovered forms
+				for _, form := range crawlResult.Forms {
+					result.Findings = append(result.Findings, discovery.Finding{
+						URL:      form.URL,
+						Type:     "form",
+						Severity: "medium",
+						Details:  fmt.Sprintf("Form found: %s %s", form.Method, form.Action),
+					})
+				}
+
+				if verbose {
+					fmt.Fprintf(os.Stderr, "Deep crawled %d pages in %v\n", crawlResult.RequestsCount, crawlResult.CrawlTime)
+				}
+			}
+		}
+
+		// Pattern analysis for intense flow
+		if err == nil && result != nil {
+			analyzer := analysis.NewPatternAnalyzer()
+			analysisResult := analyzer.Analyze(result)
+
+			// Add analysis results
+			for _, secret := range analysisResult.Secrets {
+				result.Secrets = append(result.Secrets, discovery.Secret{
+					Type:    secret.Type,
+					Value:   secret.Value,
+					Context: secret.Context,
+					Source:  "pattern-analysis",
+				})
+			}
+
+			for _, path := range analysisResult.SensitivePaths {
+				result.Findings = append(result.Findings, discovery.Finding{
+					URL:      path,
+					Type:     "sensitive-path",
+					Severity: "high",
+					Details:  "Potentially sensitive path discovered",
+				})
+			}
+
+			for _, endpoint := range analysisResult.Endpoints {
+				result.Endpoints = append(result.Endpoints, discovery.Endpoint{
+					Path:   endpoint,
+					Type:   "api-endpoint",
+					Method: "GET",
+					Source: "pattern-analysis",
+				})
+			}
+
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Pattern analysis found %d secrets, %d sensitive paths, %d endpoints\n", 
+					len(analysisResult.Secrets), len(analysisResult.SensitivePaths), len(analysisResult.Endpoints))
+			}
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "Error: Unknown flow type '%s'. Use: quick, in-depth, or intense\n", flowType)
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Output results
+	outputResults(result, verbose)
+
+	if verbose {
+		stats := client.GetStats()
+		fmt.Fprintf(os.Stderr, "\nStatistics:\n")
+		fmt.Fprintf(os.Stderr, "  Total Requests: %d\n", stats.RequestsTotal)
+		fmt.Fprintf(os.Stderr, "  Successful: %d\n", stats.RequestsSuccess)
+		fmt.Fprintf(os.Stderr, "  Failed: %d\n", stats.RequestsFailed)
+		if stats.RequestsSuccess > 0 {
+			avgLatency := stats.TotalLatency / time.Duration(stats.RequestsSuccess)
+			fmt.Fprintf(os.Stderr, "  Avg Latency: %v\n", avgLatency)
+		}
+		fmt.Fprintf(os.Stderr, "  Total Time: %v\n", time.Since(start))
+	}
+}
+
+func outputResults(result *discovery.Result, verbose bool) {
+	if result == nil {
+		return
+	}
+
+	// Output discovered paths
+	if len(result.Paths) > 0 {
+		fmt.Println("\n[+] Discovered Paths:")
+		for _, path := range result.Paths {
+			fmt.Printf("  [%d] %s", path.Status, path.URL)
+			if verbose && path.Source != "" {
+				fmt.Printf(" (source: %s)", path.Source)
+			}
+			if path.Title != "" {
+				fmt.Printf(" - %s", path.Title)
+			}
+			fmt.Println()
 		}
 	}
+
+	// Output endpoints
+	if len(result.Endpoints) > 0 {
+		fmt.Println("\n[+] Discovered Endpoints:")
+		for _, endpoint := range result.Endpoints {
+			fmt.Printf("  %s %s", endpoint.Method, endpoint.Path)
+			if verbose {
+				fmt.Printf(" (type: %s, source: %s)", endpoint.Type, endpoint.Source)
+			}
+			fmt.Println()
+		}
+	}
+
+	// Output secrets
+	if len(result.Secrets) > 0 {
+		fmt.Println("\n[!] Discovered Secrets:")
+		for _, secret := range result.Secrets {
+			fmt.Printf("  [%s] %s", secret.Type, secret.Value)
+			if verbose && secret.Context != "" {
+				fmt.Printf(" - %s", secret.Context)
+			}
+			fmt.Println()
+		}
+	}
+
+	// Output findings
+	if len(result.Findings) > 0 {
+		fmt.Println("\n[*] Findings:")
+		for _, finding := range result.Findings {
+			fmt.Printf("  [%s] %s: %s", finding.Severity, finding.Type, finding.URL)
+			if finding.Details != "" {
+				fmt.Printf(" - %s", finding.Details)
+			}
+			fmt.Println()
+		}
+	}
+
+	if verbose {
+		fmt.Printf("\n[*] Discovery completed in %v\n", result.DiscoveryTime)
+	}
+}
+
+func loadWordlist(path string) []string {
+	var wordlist []string
+
+	file, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not load wordlist %s: %v\n", path, err)
+		return wordlist
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			wordlist = append(wordlist, line)
+		}
+	}
+
+	return wordlist
 }

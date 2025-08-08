@@ -1,24 +1,32 @@
-# WebScope
+# WebScope v2.0.0
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/ResistanceIsUseless/webscope/releases)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/ResistanceIsUseless/webscope/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/resistanceisuseless/webscope)](https://goreportcard.com/report/github.com/resistanceisuseless/webscope)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-WebScope is a **static web content analysis tool** designed for security researchers and penetration testers. It performs deep analysis of known web targets through static techniques including path bruteforcing, JavaScript analysis, and historical data mining. WebScope complements active crawling tools like Katana by focusing on **static analysis** rather than dynamic crawling.
+WebScope is a **static web content analysis tool** designed for security researchers and penetration testers. **Version 2.0.0** is a complete rewrite with zero goroutine leaks, aggressive 2-second timeouts, and progressive discovery flows. It performs comprehensive analysis including GraphQL/WebSocket discovery, JavaScript analysis with jsluice, pattern detection, and smart path variations.
 
 ## Features
 
-- **Multiple Input Formats**: Supports stdin, text files, nmap XML exports, and JSON
-- **Flexible Target Parsing**: Accepts URLs, host:port pairs, IP addresses, and domain names  
-- **Modular Discovery**: HTTP probing, robots.txt parsing, path bruteforcing, JavaScript analysis
-- **Advanced JavaScript Analysis**: Deep static analysis using jsluice for GraphQL schemas, WebSocket endpoints, and secrets
-- **Enhanced False Positive Detection**: Machine learning-based pattern recognition to filter wildcard responses
-- **Entropy-Based Secret Detection**: Advanced secret classification with Shannon entropy analysis
-- **Streaming Output**: Real-time result streaming with JSONL and JSON formats
-- **Data Loss Prevention**: Results written immediately to prevent loss on crashes
-- **Graceful Shutdown**: Signal handling to save partial results on interruption
-- **Rate Limiting**: Built-in rate limiting to respect target infrastructure
-- **Concurrent Processing**: Worker pools for parallel target analysis
+### ✨ **v2.0.0 Key Improvements**
+- **Zero Goroutine Leaks**: Fixed critical goroutine explosion (27,000+ leaks in v1)
+- **Aggressive Timeouts**: 2-second timeout per request (vs 30+ second hangs)
+- **Progressive Flows**: `quick` → `in-depth` → `intense` (vs overlapping modules)
+- **Sequential Processing**: No goroutine explosion, predictable resource usage
+- **Guaranteed Cleanup**: All resources properly closed, no connection pool leaks
+
+### 🚀 **Discovery Flows**
+- **Quick Flow**: robots.txt + sitemap.xml + basic paths (~30 requests)
+- **In-Depth Flow**: + urlfinder + katana crawling + jsluice analysis (~100 requests)
+- **Intense Flow**: + larger wordlists + deep crawling + pattern analysis + GraphQL/WebSocket (~500+ requests)
+
+### 🔍 **Comprehensive Analysis**
+- **JavaScript Analysis**: Deep static analysis using jsluice for endpoints, secrets, GraphQL schemas
+- **GraphQL Discovery**: Endpoint detection, schema introspection, validation
+- **WebSocket Discovery**: Protocol detection, event discovery, Socket.IO support
+- **Pattern Detection**: 50+ regex patterns for secrets, vulnerabilities, files (gf-compatible)
+- **Smart Path Variations**: Intelligent permutations (extensions, backups, versions, environments)
+- **False Positive Filtering**: Baseline analysis with signature detection
 
 ## Installation
 
@@ -36,17 +44,17 @@ go build -o webscope
 
 ### Basic Usage
 ```bash
-# Single target via stdin
-echo "https://example.com" | webscope
+# Quick reconnaissance (fast)
+echo "https://example.com" | webscope -flow quick -v
 
-# Multiple targets from file
-webscope -i targets.txt
+# Comprehensive scan (default)
+webscope -target https://example.com -flow in-depth
 
-# Nmap XML input
-webscope -i nmap_results.xml
+# Maximum coverage
+webscope -target https://example.com -flow intense -depth 3 -max-requests 1000 -v
 
-# Custom options with streaming output
-webscope -i targets.txt -o results.jsonl -of jsonl -w 10 -r 50 -m http,robots,paths -v
+# Custom wordlist
+webscope -target https://example.com -flow intense -wordlist custom.txt
 
 # Standard JSON format (non-streaming)
 webscope -i targets.txt -o results.json -of json -v
