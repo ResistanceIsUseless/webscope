@@ -39,6 +39,7 @@ require (
 	github.com/cloudflare/circl v1.6.1 // indirect
 	github.com/cnf/structhash v0.0.0-20201127153200-e1b16c1ebc08 // indirect
 	github.com/corona10/goimagehash v1.1.0 // indirect
+	github.com/corpix/uarand v0.2.0 // indirect
 	github.com/dimchansky/utfbom v1.1.1 // indirect
 	github.com/ditashi/jsbeautifier-go v0.0.0-20141206144643-2520a8026a9c // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
@@ -113,6 +114,7 @@ require (
 	github.com/projectdiscovery/retryabledns v1.0.103 // indirect
 	github.com/projectdiscovery/retryablehttp-go v1.0.118 // indirect
 	github.com/projectdiscovery/tlsx v1.1.9 // indirect
+	github.com/projectdiscovery/urlfinder v0.0.3 // indirect
 	github.com/projectdiscovery/useragent v0.0.101 // indirect
 	github.com/projectdiscovery/utils v0.4.21 // indirect
 	github.com/projectdiscovery/wappalyzergo v0.2.38 // indirect

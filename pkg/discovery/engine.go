@@ -186,6 +186,9 @@ func NewEngine(config *Config) *Engine {
 		case "patterns":
 			// Pattern-based detection module (similar to tomnomnom's gf)
 			engine.modules = append(engine.modules, modules.NewPatternModule(config.Timeout, config.AppConfig))
+		case "urlfinder":
+			// URLFinder module for archive-based URL discovery
+			engine.modules = append(engine.modules, modules.NewURLFinderModuleWithConfig(config.Timeout, config.AppConfig))
 		}
 	}
 

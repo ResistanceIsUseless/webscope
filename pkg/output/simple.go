@@ -167,6 +167,7 @@ func isDiscoverySource(source string) bool {
 		"advanced-javascript", // Advanced JS analysis
 		"katana-lib",       // Crawled discoveries
 		"httpx-lib",        // Direct HTTP validation (not paths module)
+		"urlfinder",        // Archive-based URL discoveries
 	}
 	
 	// Exclude path bruteforcing modules

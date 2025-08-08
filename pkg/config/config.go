@@ -22,6 +22,7 @@ type Profile struct {
 	HTTPX         HTTPXConfig            `yaml:"httpx" json:"httpx"`
 	Paths         PathsConfig            `yaml:"paths" json:"paths"`
 	JavaScript    JavaScriptConfig       `yaml:"javascript" json:"javascript"`
+	URLFinder     URLFinderConfig        `yaml:"urlfinder" json:"urlfinder"`
 	FalsePositive FalsePositiveConfig    `yaml:"false_positive" json:"false_positive"`
 }
 
@@ -119,6 +120,14 @@ type PatternRule struct {
 	Severity    string   `yaml:"severity" json:"severity"`
 	Description string   `yaml:"description" json:"description"`
 	Enabled     bool     `yaml:"enabled" json:"enabled,omitempty"`
+}
+
+type URLFinderConfig struct {
+	RateLimit      int      `yaml:"rate_limit" json:"rate_limit,omitempty"`
+	Timeout        int      `yaml:"timeout" json:"timeout,omitempty"`
+	Sources        []string `yaml:"sources" json:"sources,omitempty"`
+	ExcludeSources []string `yaml:"exclude_sources" json:"exclude_sources,omitempty"`
+	UseAllSources  bool     `yaml:"use_all_sources" json:"use_all_sources,omitempty"`
 }
 
 func Load(configPath string) (*Config, error) {
@@ -248,5 +257,30 @@ func (c *Config) GetDefaultHTTPXConfig() HTTPXConfig {
 		MaxRedirects:   5,
 		TechDetect:     true,
 		WebServer:      true,
+	}
+}
+
+// GetURLFinderConfig returns urlfinder configuration for the specified profile or default
+func (c *Config) GetURLFinderConfig(profileName string) URLFinderConfig {
+	if profile, exists := c.GetProfile(profileName); exists {
+		return profile.URLFinder
+	}
+	return URLFinderConfig{} // Return empty config if profile not found
+}
+
+// GetDefaultURLFinderConfig returns URLFinder config with defaults
+func (c *Config) GetDefaultURLFinderConfig() *URLFinderConfig {
+	// Try to get from normal profile first, then return defaults
+	if ufConfig := c.GetURLFinderConfig("normal"); ufConfig.RateLimit > 0 {
+		return &ufConfig
+	}
+	
+	// Return sensible defaults
+	return &URLFinderConfig{
+		RateLimit:      10,
+		Timeout:        120, // 2 minutes
+		Sources:        []string{}, // Use urlfinder defaults
+		ExcludeSources: []string{},
+		UseAllSources:  false,
 	}
 }

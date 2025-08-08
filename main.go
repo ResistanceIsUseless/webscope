@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	appVersion = "1.1.2"
+	appVersion = "1.2.0"
 )
 
 func showBanner() {
@@ -58,7 +58,7 @@ func showUsage() {
 	
 	fmt.Printf("MODULES:\n")
 	fmt.Printf("   -m, -modules string[]   discovery modules to run (default \"robots,sitemap,paths,patterns\")\n")
-	fmt.Printf("                          Available: httpx-lib,robots,sitemap,paths,katana-lib*,javascript,advanced-javascript,patterns\n")
+	fmt.Printf("                          Available: httpx-lib,robots,sitemap,paths,katana-lib*,javascript,advanced-javascript,patterns,urlfinder\n")
 	fmt.Printf("                          *katana-lib: can cause goroutine leaks in bulk scans, use with caution\n\n")
 	
 	fmt.Printf("DEBUG:\n")
