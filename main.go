@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/resistanceisuseless/webscope/pkg/analysis"
+	"github.com/resistanceisuseless/webscope/pkg/config"
 	"github.com/resistanceisuseless/webscope/pkg/crawl"
 	"github.com/resistanceisuseless/webscope/pkg/discovery"
 	"github.com/resistanceisuseless/webscope/pkg/http"
@@ -33,6 +35,7 @@ func main() {
 		maxDepth    int
 		maxRequests int
 		wordlist    string
+		configFile  string
 		verbose     bool
 		version     bool
 	)
@@ -45,6 +48,7 @@ func main() {
 	flag.IntVar(&maxDepth, "depth", 2, "Max crawl depth (for crawl flow)")
 	flag.IntVar(&maxRequests, "max-requests", 100, "Max requests (for crawl flow)")
 	flag.StringVar(&wordlist, "wordlist", "", "Custom wordlist for deep flow")
+	flag.StringVar(&configFile, "config", "", "Config file path")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
 	flag.BoolVar(&version, "version", false, "Show version")
 
@@ -68,6 +72,38 @@ func main() {
 	if version {
 		fmt.Printf("WebScope v%s\n", appVersion)
 		os.Exit(0)
+	}
+
+	// Load configuration
+	var appConfig *config.Config
+	var err error
+	
+	if configFile != "" {
+		appConfig, err = config.Load(configFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// Try default config paths
+		for _, path := range config.GetDefaultConfigPaths() {
+			if _, err := os.Stat(path); err == nil {
+				appConfig, err = config.Load(path)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error loading config from %s: %v\n", path, err)
+					os.Exit(1)
+				}
+				if verbose {
+					fmt.Fprintf(os.Stderr, "Loaded config from: %s\n", path)
+				}
+				break
+			}
+		}
+	}
+	
+	// Use default config if none found
+	if appConfig == nil {
+		appConfig = &config.Config{}
 	}
 
 	// Get target from flag or stdin
@@ -100,7 +136,7 @@ func main() {
 	client := http.NewClient(clientConfig)
 	defer client.Shutdown()
 
-	// Setup signal handling for graceful shutdown
+	// Setup signal handling for fast shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -110,9 +146,17 @@ func main() {
 	go func() {
 		<-sigChan
 		if verbose {
-			fmt.Fprintf(os.Stderr, "\nReceived interrupt signal, shutting down gracefully...\n")
+			fmt.Fprintf(os.Stderr, "\nReceived interrupt signal, shutting down immediately...\n")
 		}
 		cancel()
+		// Force exit after 500ms if graceful shutdown doesn't work
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Force terminating...\n")
+			}
+			os.Exit(0)
+		}()
 	}()
 
 	// Execute the selected flow
@@ -122,7 +166,6 @@ func main() {
 
 	start := time.Now()
 	var result *discovery.Result
-	var err error
 
 	switch discovery.FlowType(flowType) {
 	case discovery.QuickFlow:
@@ -262,7 +305,7 @@ func main() {
 	}
 
 	// Output results
-	outputResults(result, verbose)
+	outputResults(result, appConfig, verbose)
 
 	if verbose {
 		stats := client.GetStats()
@@ -278,59 +321,43 @@ func main() {
 	}
 }
 
-func outputResults(result *discovery.Result, verbose bool) {
+func outputResults(result *discovery.Result, appConfig *config.Config, verbose bool) {
 	if result == nil {
 		return
 	}
 
-	// Output discovered paths
+	// Get allowed status codes from config
+	allowedStatuses := getAllowedStatusCodes(appConfig)
+
+	// Output discovered paths with consistent format: URL [STATUS] [MODULE]
 	if len(result.Paths) > 0 {
-		fmt.Println("\n[+] Discovered Paths:")
 		for _, path := range result.Paths {
-			fmt.Printf("  [%d] %s", path.Status, path.URL)
-			if verbose && path.Source != "" {
-				fmt.Printf(" (source: %s)", path.Source)
+			// Check if status code is allowed by configuration
+			if allowedStatuses[path.Status] {
+				if verbose && path.Source != "" {
+					fmt.Printf("%s [%d] [%s]\n", path.URL, path.Status, path.Source)
+				} else {
+					fmt.Printf("%s [%d]\n", path.URL, path.Status)
+				}
 			}
-			if path.Title != "" {
-				fmt.Printf(" - %s", path.Title)
-			}
-			fmt.Println()
 		}
 	}
 
-	// Output endpoints
-	if len(result.Endpoints) > 0 {
-		fmt.Println("\n[+] Discovered Endpoints:")
-		for _, endpoint := range result.Endpoints {
-			fmt.Printf("  %s %s", endpoint.Method, endpoint.Path)
-			if verbose {
-				fmt.Printf(" (type: %s, source: %s)", endpoint.Type, endpoint.Source)
-			}
-			fmt.Println()
-		}
-	}
-
-	// Output secrets
-	if len(result.Secrets) > 0 {
-		fmt.Println("\n[!] Discovered Secrets:")
+	// Output secrets with consistent format if they have URLs
+	if len(result.Secrets) > 0 && verbose {
 		for _, secret := range result.Secrets {
-			fmt.Printf("  [%s] %s", secret.Type, secret.Value)
-			if verbose && secret.Context != "" {
-				fmt.Printf(" - %s", secret.Context)
+			if strings.HasPrefix(secret.Value, "http") {
+				fmt.Printf("%s [SECRET] [%s]\n", secret.Value, secret.Source)
 			}
-			fmt.Println()
 		}
 	}
 
-	// Output findings
-	if len(result.Findings) > 0 {
-		fmt.Println("\n[*] Findings:")
+	// Output findings with consistent format if they have URLs  
+	if len(result.Findings) > 0 && verbose {
 		for _, finding := range result.Findings {
-			fmt.Printf("  [%s] %s: %s", finding.Severity, finding.Type, finding.URL)
-			if finding.Details != "" {
-				fmt.Printf(" - %s", finding.Details)
+			if finding.URL != "" && finding.Severity == "high" {
+				fmt.Printf("%s [FINDING] [%s]\n", finding.URL, finding.Type)
 			}
-			fmt.Println()
 		}
 	}
 
@@ -358,4 +385,29 @@ func loadWordlist(path string) []string {
 	}
 
 	return wordlist
+}
+
+// getAllowedStatusCodes gets the allowed status codes from config or returns defaults
+func getAllowedStatusCodes(appConfig *config.Config) map[int]bool {
+	allowedStatuses := make(map[int]bool)
+	
+	// Get status codes from config
+	httpxConfig := appConfig.GetDefaultHTTPXConfig()
+	if len(httpxConfig.StatusCodes) > 0 {
+		for _, statusStr := range httpxConfig.StatusCodes {
+			if status, err := strconv.Atoi(statusStr); err == nil {
+				allowedStatuses[status] = true
+			}
+		}
+	}
+	
+	// If no config provided, use conservative defaults (successful requests only)
+	if len(allowedStatuses) == 0 {
+		// Default to successful status codes: 2xx and 3xx
+		for i := 200; i < 400; i++ {
+			allowedStatuses[i] = true
+		}
+	}
+	
+	return allowedStatuses
 }

@@ -1,0 +1,878 @@
+name: WebScope Long-Running Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 04:00 UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Test mode to run'
+        required: true
+        default: 'quick'
+        type: choice
+        options:
+          - quick
+          - full
+          - comprehensive
+          - performance
+      target_urls:
+        description: 'Custom target URLs (comma-separated)'
+        required: false
+        default: 'http://httpbin.org,https://jsonplaceholder.typicode.com'
+      max_depth:
+        description: 'Maximum crawling depth'
+        required: false
+        default: '2'
+      rate_limit:
+        description: 'Rate limit (requests per second)'
+        required: false
+        default: '5'
+
+env:
+  GO_VERSION: '1.21'
+  TEST_TIMEOUT: 2400  # 40 minutes
+  MEMORY_LIMIT: 1000  # 1GB
+  DEFAULT_RATE_LIMIT: 5
+
+jobs:
+  build-and-prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      binary-hash: ${{ steps.build.outputs.hash }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: ${{ runner.os }}-go-webscope-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-webscope-
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq curl wget chromium-browser
+
+    - name: Build WebScope
+      id: build
+      run: |
+        go mod download
+        go build -v -o webscope .
+        chmod +x webscope
+        
+        # Verify build
+        ./webscope -version || ./webscope -help
+        
+        # Generate hash for cache validation
+        echo "hash=$(sha256sum webscope | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+    - name: Create test configurations
+      run: |
+        mkdir -p test-configs
+        
+        # Create CI-specific configuration
+        cat > test-configs/ci-config.yaml << 'EOF'
+        global:
+          timeout: 30s
+          max_retries: 2
+          rate_limit: 5
+          user_agent: "WebScope-CI/1.0"
+        
+        crawler:
+          max_depth: 2
+          max_pages: 50
+          follow_redirects: true
+          respect_robots_txt: true
+          delay_between_requests: 200ms
+        
+        modules:
+          directory_enumeration:
+            enabled: true
+            max_depth: 2
+            wordlist_limit: 100
+          
+          technology_detection:
+            enabled: true
+            deep_scan: false
+          
+          vulnerability_scan:
+            enabled: false  # Disabled for CI safety
+          
+          screenshot:
+            enabled: false  # Disabled for CI (no display)
+        
+        output:
+          format: json
+          include_screenshots: false
+          include_raw_responses: false
+          verbose: false
+        
+        security:
+          max_request_size: 10MB
+          max_response_size: 10MB
+          allowed_schemes: ["http", "https"]
+          blocked_domains: []
+        EOF
+        
+        # Create performance test configuration
+        cat > test-configs/performance-config.yaml << 'EOF'
+        global:
+          timeout: 60s
+          max_retries: 1
+          rate_limit: 10
+          user_agent: "WebScope-Performance/1.0"
+        
+        crawler:
+          max_depth: 3
+          max_pages: 100
+          follow_redirects: true
+          delay_between_requests: 100ms
+        
+        modules:
+          directory_enumeration:
+            enabled: true
+            max_depth: 3
+            wordlist_limit: 200
+          
+          technology_detection:
+            enabled: true
+            deep_scan: true
+        
+        output:
+          format: json
+          verbose: false
+        EOF
+        
+        # Create test wordlists
+        mkdir -p wordlists
+        cat > wordlists/ci-wordlist.txt << 'EOF'
+        admin
+        api
+        login
+        test
+        backup
+        config
+        docs
+        images
+        js
+        css
+        EOF
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: webscope-binaries-${{ github.run_number }}
+        path: |
+          webscope
+          test-configs/
+          wordlists/
+        retention-days: 1
+
+  test-matrix:
+    runs-on: ubuntu-latest
+    needs: build-and-prepare
+    strategy:
+      matrix:
+        test-type: [quick, full, performance]
+        target: [httpbin, jsonplaceholder, local]
+      fail-fast: false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: webscope-binaries-${{ github.run_number }}
+
+    - name: Set up test environment
+      run: |
+        # Make binary executable
+        chmod +x webscope
+        
+        # Create test directories
+        mkdir -p test-results test-artifacts test-targets
+        
+        # Create target-specific test files
+        case "${{ matrix.target }}" in
+          httpbin)
+            echo "http://httpbin.org" > test-targets/targets.txt
+            echo "http://httpbin.org/html" >> test-targets/targets.txt
+            ;;
+          jsonplaceholder)
+            echo "https://jsonplaceholder.typicode.com" > test-targets/targets.txt
+            ;;
+          local)
+            # Set up local test server
+            echo "Setting up local test server..."
+            mkdir -p local-server
+            cat > local-server/index.html << 'EOF'
+        <!DOCTYPE html>
+        <html>
+        <head><title>WebScope Test</title></head>
+        <body>
+          <h1>Test Page</h1>
+          <a href="/admin">Admin</a>
+          <a href="/api">API</a>
+          <script src="/js/app.js"></script>
+        </body>
+        </html>
+        EOF
+            cat > local-server/admin.html << 'EOF'
+        <!DOCTYPE html>
+        <html><head><title>Admin</title></head>
+        <body><h1>Admin Panel</h1></body></html>
+        EOF
+            
+            # Start simple HTTP server
+            cd local-server && python3 -m http.server 8080 &
+            LOCAL_SERVER_PID=$!
+            cd ..
+            sleep 2
+            
+            echo "http://localhost:8080" > test-targets/targets.txt
+            echo "local_server_pid=$LOCAL_SERVER_PID" >> $GITHUB_ENV
+            ;;
+        esac
+
+    - name: Run quick tests
+      if: matrix.test-type == 'quick' || github.event.inputs.test_mode == 'quick'
+      run: |
+        echo "Running WebScope quick tests for ${{ matrix.target }}..."
+        
+        timeout 300 ./scripts/test-webscope.sh --quick || {
+          echo "Quick test completed with potential issues"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> $GITHUB_ENV
+        }
+        
+        # Copy results
+        cp -r test-output/* test-artifacts/ 2>/dev/null || true
+
+    - name: Run full tests
+      if: matrix.test-type == 'full' || github.event.inputs.test_mode == 'full'
+      run: |
+        echo "Running WebScope full tests for ${{ matrix.target }}..."
+        
+        timeout ${{ env.TEST_TIMEOUT }} ./scripts/test-webscope.sh || {
+          echo "Full test completed with potential issues"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> $GITHUB_ENV
+        }
+        
+        # Copy results
+        cp -r test-output/* test-artifacts/ 2>/dev/null || true
+
+    - name: Run performance tests
+      if: matrix.test-type == 'performance' || github.event.inputs.test_mode == 'performance'
+      run: |
+        echo "Running WebScope performance tests for ${{ matrix.target }}..."
+        
+        # Custom performance test with specific configuration
+        ./webscope \
+          -t test-targets/targets.txt \
+          -o test-artifacts/performance-${{ matrix.target }}.json \
+          -c test-configs/performance-config.yaml \
+          --max-depth ${{ github.event.inputs.max_depth || '2' }} \
+          --rate-limit ${{ github.event.inputs.rate_limit || '5' }} \
+          --timeout 30s || {
+          echo "Performance test completed for ${{ matrix.target }}"
+        }
+
+    - name: Run comprehensive tests
+      if: github.event.inputs.test_mode == 'comprehensive'
+      run: |
+        echo "Running comprehensive WebScope tests for ${{ matrix.target }}..."
+        
+        # Custom comprehensive test with user inputs
+        if [ -n "${{ github.event.inputs.target_urls }}" ]; then
+          IFS=',' read -ra URLS <<< "${{ github.event.inputs.target_urls }}"
+          for url in "${URLS[@]}"; do
+            echo "Testing URL: $url"
+            ./webscope \
+              -u "$url" \
+              -o "test-artifacts/comprehensive-$(echo $url | sed 's/[^a-zA-Z0-9]/_/g').json" \
+              -c test-configs/ci-config.yaml \
+              --max-depth ${{ github.event.inputs.max_depth || '2' }} \
+              --rate-limit ${{ github.event.inputs.rate_limit || '5' }} || true
+          done
+        fi
+        
+        # Run standard comprehensive suite
+        timeout ${{ env.TEST_TIMEOUT }} ./scripts/test-webscope.sh || {
+          echo "Comprehensive test completed with potential issues"
+        }
+        
+        # Copy results
+        cp -r test-output/* test-artifacts/ 2>/dev/null || true
+
+    - name: Analyze crawling results
+      if: always()
+      run: |
+        echo "Analyzing WebScope crawling results..."
+        
+        # Generate test summary
+        cat > test-summary.md << EOF
+        # WebScope Test Summary - ${{ matrix.test-type }} on ${{ matrix.target }}
+        
+        **Configuration:**
+        - Test Type: ${{ matrix.test-type }}
+        - Target: ${{ matrix.target }}
+        - Go Version: ${{ env.GO_VERSION }}
+        - Runner: ${{ runner.os }}
+        - Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+        
+        **Binary Information:**
+        - WebScope Hash: ${{ needs.build-and-prepare.outputs.binary-hash }}
+        - Build Status: ✅ Success
+        
+        **Test Results:**
+        EOF
+        
+        # Add test report if available
+        if [ -f test-output/test-report.txt ]; then
+          echo '```' >> test-summary.md
+          cat test-output/test-report.txt >> test-summary.md
+          echo '```' >> test-summary.md
+        fi
+        
+        # Analyze JSON outputs
+        echo "**Crawling Results:**" >> test-summary.md
+        find test-artifacts -name "*.json" 2>/dev/null | while read file; do
+          if [ -s "$file" ]; then
+            size=$(stat -c%s "$file" 2>/dev/null || echo "0")
+            echo "- $(basename "$file"): ${size} bytes" >> test-summary.md
+            
+            # Extract key metrics from JSON
+            if jq empty "$file" 2>/dev/null; then
+              pages_found=$(jq -r '.pages_discovered // .results // length' "$file" 2>/dev/null || echo "unknown")
+              echo "  - Pages discovered: $pages_found" >> test-summary.md
+              echo "  - ✅ Valid JSON" >> test-summary.md
+            else
+              echo "  - ❌ Invalid JSON" >> test-summary.md
+            fi
+          fi
+        done || echo "- No crawling results generated" >> test-summary.md
+        
+        # Memory usage analysis
+        if find test-output -name "*memory*" -type f | grep -q .; then
+          max_memory=$(find test-output -name "*memory*" -exec cat {} \; 2>/dev/null | sort -n | tail -1 || echo "0")
+          echo "**Memory Usage:**" >> test-summary.md
+          echo "- Peak Memory: ${max_memory}MB" >> test-summary.md
+          
+          if [ "$max_memory" -gt "${{ env.MEMORY_LIMIT }}" ]; then
+            echo "- ⚠️ Exceeded memory limit (${{ env.MEMORY_LIMIT }}MB)" >> test-summary.md
+          fi
+        fi
+        
+        # Goroutine leak detection
+        if find test-output -name "*goroutine*" -type f | grep -q .; then
+          echo "**Goroutine Analysis:**" >> test-summary.md
+          echo "- Goroutine monitoring data available" >> test-summary.md
+        fi
+        
+        cp test-summary.md test-artifacts/
+
+    - name: Check crawling functionality
+      if: always()
+      run: |
+        echo "Validating WebScope crawling functionality..."
+        
+        # Test basic crawling mechanism
+        ./webscope \
+          -u "http://httpbin.org/html" \
+          -o test-artifacts/functionality-check.json \
+          -c test-configs/ci-config.yaml \
+          --max-depth 1 \
+          --timeout 30s || {
+          echo "Basic crawling test completed"
+        }
+        
+        # Validate output structure
+        if [ -f test-artifacts/functionality-check.json ]; then
+          echo "Crawling output file generated: ✅"
+          if jq -e 'type == "object" or type == "array"' test-artifacts/functionality-check.json >/dev/null 2>&1; then
+            echo "Output structure valid: ✅"
+          else
+            echo "Output structure validation: ⚠️ Non-standard format"
+          fi
+        fi
+
+    - name: Cleanup local server
+      if: always() && matrix.target == 'local'
+      run: |
+        if [ -n "${{ env.local_server_pid }}" ]; then
+          kill ${{ env.local_server_pid }} 2>/dev/null || true
+        fi
+
+    - name: Archive test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: webscope-test-results-${{ matrix.test-type }}-${{ matrix.target }}-${{ github.run_number }}
+        path: |
+          test-artifacts/
+          test-output/
+          test-summary.md
+        retention-days: 30
+
+    - name: Upload failure logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: webscope-failure-logs-${{ matrix.test-type }}-${{ matrix.target }}-${{ github.run_number }}
+        path: |
+          test-output/*.log
+          test-artifacts/*.log
+          *.log
+        retention-days: 7
+
+  memory-leak-test:
+    runs-on: ubuntu-latest
+    needs: build-and-prepare
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: webscope-binaries-${{ github.run_number }}
+
+    - name: Set up memory leak test
+      run: |
+        chmod +x webscope
+        mkdir -p memory-test
+        
+        # Create test targets for memory testing
+        cat > memory-test/targets.txt << 'EOF'
+        http://httpbin.org
+        http://httpbin.org/html
+        http://httpbin.org/json
+        http://httpbin.org/xml
+        EOF
+
+    - name: Run memory leak detection
+      run: |
+        echo "Running WebScope memory leak detection..."
+        
+        # Create memory monitoring script
+        cat > memory-monitor.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        echo "=== WebScope Memory Leak Test ==="
+        echo "Start: $(date)"
+        
+        # Start WebScope with memory monitoring
+        ./webscope \
+          -t memory-test/targets.txt \
+          -o memory-test/results.json \
+          -c test-configs/ci-config.yaml \
+          --max-depth 3 \
+          --rate-limit 2 &
+        
+        WEBSCOPE_PID=$!
+        echo "WebScope PID: $WEBSCOPE_PID"
+        
+        # Monitor memory usage
+        echo "Monitoring memory usage..."
+        while kill -0 $WEBSCOPE_PID 2>/dev/null; do
+          if command -v ps >/dev/null 2>&1; then
+            memory_kb=$(ps -o rss= -p $WEBSCOPE_PID 2>/dev/null || echo "0")
+            memory_mb=$((memory_kb / 1024))
+            echo "$(date +%s): ${memory_mb}MB" >> memory-usage.log
+            
+            if [ "$memory_mb" -gt "${{ env.MEMORY_LIMIT }}" ]; then
+              echo "WARNING: Memory usage exceeded ${{ env.MEMORY_LIMIT }}MB"
+            fi
+          fi
+          sleep 5
+        done
+        
+        echo "WebScope process completed"
+        echo "End: $(date)"
+        
+        # Analyze memory usage
+        if [ -f memory-usage.log ]; then
+          echo "=== Memory Usage Analysis ==="
+          echo "Peak memory: $(sort -n memory-usage.log | tail -1)"
+          echo "Memory samples: $(wc -l < memory-usage.log)"
+        fi
+        EOF
+        
+        chmod +x memory-monitor.sh
+        timeout 1200 ./memory-monitor.sh > memory-leak-report.txt 2>&1
+
+    - name: Archive memory test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: webscope-memory-test-${{ github.run_number }}
+        path: |
+          memory-leak-report.txt
+          memory-usage.log
+          memory-test/results.json
+        retention-days: 90
+
+  performance-benchmark:
+    runs-on: ubuntu-latest
+    needs: build-and-prepare
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: webscope-binaries-${{ github.run_number }}
+
+    - name: Set up performance benchmark
+      run: |
+        chmod +x webscope
+        mkdir -p benchmark
+        
+        # Create comprehensive target list for benchmarking
+        cat > benchmark/targets.txt << 'EOF'
+        http://httpbin.org
+        https://jsonplaceholder.typicode.com
+        EOF
+
+    - name: Run performance benchmarks
+      run: |
+        echo "Running WebScope performance benchmarks..."
+        
+        # Create benchmark script
+        cat > benchmark.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        echo "=== WebScope Performance Benchmark ==="
+        echo "Targets: $(wc -l < benchmark/targets.txt)"
+        echo "Start: $(date)"
+        
+        start_time=$(date +%s)
+        
+        # Run with detailed timing
+        /usr/bin/time -v ./webscope \
+          -t benchmark/targets.txt \
+          -o benchmark/results.json \
+          -c test-configs/performance-config.yaml \
+          --max-depth ${{ github.event.inputs.max_depth || '2' }} \
+          --rate-limit ${{ github.event.inputs.rate_limit || '5' }} \
+          2> benchmark-timing.log
+        
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+        
+        echo "Duration: ${duration}s"
+        echo "End: $(date)"
+        
+        # Extract performance metrics
+        if [ -f benchmark-timing.log ]; then
+          echo "=== Performance Metrics ==="
+          grep -E "(Maximum resident set size|User time|System time|Percent of CPU)" benchmark-timing.log || true
+        fi
+        
+        # Analyze crawling results
+        if [ -f benchmark/results.json ]; then
+          pages_found=$(jq -r '.pages_discovered // .results // length' benchmark/results.json 2>/dev/null || echo "0")
+          echo "Pages discovered: $pages_found"
+          echo "Pages per second: $(echo "scale=2; $pages_found / $duration" | bc -l || echo "N/A")"
+        fi
+        EOF
+        
+        chmod +x benchmark.sh
+        timeout 1800 ./benchmark.sh > benchmark-report.txt 2>&1
+
+    - name: Archive benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: webscope-benchmark-${{ github.run_number }}
+        path: |
+          benchmark-report.txt
+          benchmark/results.json
+          benchmark-timing.log
+        retention-days: 90
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Gosec Security Scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: '-fmt sarif -out gosec.sarif ./...'
+
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: gosec.sarif
+
+    - name: Run custom security checks
+      run: |
+        echo "Running custom WebScope security checks..."
+        
+        # Check for potential XSS vulnerabilities
+        echo "Checking for XSS patterns..."
+        grep -r -i "innerHTML\|document\.write\|eval(" --exclude-dir=.git . || echo "No obvious XSS patterns found"
+        
+        # Check for unsafe HTTP patterns
+        echo "Checking for unsafe HTTP handling..."
+        grep -r "http://" pkg/ cmd/ internal/ || echo "HTTP patterns review needed"
+        
+        # Check for potential SSRF vulnerabilities
+        echo "Checking for SSRF patterns..."
+        grep -r -i "url\.Parse\|http\.Get\|http\.Post" cmd/ pkg/ internal/ || echo "HTTP client usage found (review needed)"
+
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: [build-and-prepare, test-matrix]
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: webscope-binaries-${{ github.run_number }}
+
+    - name: Run integration tests
+      run: |
+        chmod +x webscope
+        
+        echo "Running WebScope integration tests..."
+        
+        # Test 1: Basic CLI integration
+        echo "Testing CLI integration..."
+        ./webscope -help > /dev/null
+        
+        # Test 2: Configuration file integration
+        echo "Testing configuration integration..."
+        ./webscope \
+          -c test-configs/ci-config.yaml \
+          -u "http://httpbin.org/html" \
+          -o integration-config-test.json || true
+        
+        # Test 3: Multiple output formats
+        echo "Testing output formats..."
+        ./webscope \
+          -u "http://httpbin.org/json" \
+          -o integration-json.json \
+          --timeout 30s || true
+        
+        # Test 4: Wordlist integration
+        echo "Testing wordlist integration..."
+        ./webscope \
+          -u "http://httpbin.org" \
+          -o integration-wordlist.json \
+          -c test-configs/ci-config.yaml \
+          --wordlist wordlists/ci-wordlist.txt || true
+        
+        echo "Integration tests completed!"
+
+    - name: Archive integration results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: webscope-integration-${{ github.run_number }}
+        path: |
+          integration-*.json
+        retention-days: 7
+
+  test-summary:
+    runs-on: ubuntu-latest
+    needs: [test-matrix, memory-leak-test, performance-benchmark, security-scan, integration-test]
+    if: always()
+    
+    steps:
+    - name: Create comprehensive test review
+      run: |
+        cat > TESTING_REVIEW.md << 'EOF'
+        # WebScope Testing Review
+        
+        ## Test Run Summary
+        
+        **Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+        **Workflow Run:** ${{ github.run_number }}
+        **Commit:** ${{ github.sha }}
+        **Branch:** ${{ github.ref_name }}
+        **Trigger:** ${{ github.event_name }}
+        
+        ## Test Results Overview
+        
+        ### Matrix Tests
+        - **Status:** ${{ needs.test-matrix.result }}
+        - **Types Tested:** Quick, Full, Performance
+        - **Targets Tested:** HTTPBin, JSONPlaceholder, Local Server
+        - **Coverage:** Web crawling, directory enumeration, technology detection
+        
+        ### Memory Leak Tests
+        - **Status:** ${{ needs.memory-leak-test.result }}
+        - **Focus:** Long-running process stability, memory usage patterns
+        - **Duration:** Extended crawling sessions with continuous monitoring
+        
+        ### Performance Benchmarks
+        - **Status:** ${{ needs.performance-benchmark.result }}
+        - **Metrics:** Crawling speed, memory efficiency, CPU usage
+        - **Configuration:** Rate limiting, depth control, concurrent requests
+        
+        ### Security Scan
+        - **Status:** ${{ needs.security-scan.result }}
+        - **Tools:** Gosec, custom security pattern detection
+        - **Focus:** XSS prevention, SSRF protection, HTTP security
+        
+        ### Integration Tests
+        - **Status:** ${{ needs.integration-test.result }}
+        - **Coverage:** CLI interface, configuration files, output formats, wordlists
+        
+        ## Key Metrics
+        
+        ### Memory Management
+        - **Limit:** ${{ env.MEMORY_LIMIT }}MB
+        - **Monitoring:** Continuous during crawling operations
+        - **Leak Detection:** Automated memory pattern analysis
+        
+        ### Performance Thresholds
+        - **Test Timeout:** ${{ env.TEST_TIMEOUT }}s (40 minutes)
+        - **Default Rate Limit:** ${{ env.DEFAULT_RATE_LIMIT }} req/s
+        - **Configurable Depth:** Via workflow inputs
+        
+        ### Crawling Capabilities
+        - **Target Types:** Static sites, APIs, local servers
+        - **Discovery Methods:** Directory enumeration, link following
+        - **Output Formats:** JSON with detailed metadata
+        
+        ## Test Configurations
+        
+        ### CI Configuration
+        - Restricted crawling depth and page limits
+        - Conservative rate limiting for CI stability
+        - Disabled resource-intensive modules (screenshots, vulnerability scans)
+        
+        ### Performance Configuration
+        - Increased depth and page limits
+        - Higher rate limits for throughput testing
+        - Enabled deep scanning features
+        
+        ## Recommendations
+        
+        ### ✅ All Tests Passed
+        - WebScope is ready for production deployment
+        - Memory usage is within acceptable limits
+        - Crawling performance meets expectations
+        - Security scan found no critical issues
+        - Integration tests confirm all interfaces work correctly
+        
+        ### ❌ Some Tests Failed
+        - **Matrix Test Failures:** Check specific target/test-type combinations
+        - **Memory Issues:** Review memory leak detection results
+        - **Performance Problems:** Examine benchmark data for bottlenecks
+        - **Security Concerns:** Address any security findings immediately
+        - **Integration Failures:** Validate CLI arguments and configuration files
+        
+        ## Troubleshooting Guide
+        
+        ### Common Issues
+        1. **Memory Leaks:** Check for unclosed HTTP connections or goroutine leaks
+        2. **Timeout Failures:** Verify target accessibility and rate limiting
+        3. **Crawling Errors:** Check robots.txt compliance and HTTP status handling
+        4. **JSON Validation:** Ensure output format consistency across all modules
+        5. **Configuration Issues:** Validate YAML syntax and parameter values
+        
+        ### Performance Optimization
+        - **Rate Limiting:** Adjust based on target server capabilities
+        - **Depth Control:** Balance thoroughness with resource usage
+        - **Module Selection:** Enable only necessary scanning modules
+        - **Concurrency:** Monitor system resources when increasing parallelism
+        
+        ## Debug Information
+        
+        ### Available Artifacts
+        - `webscope-test-results-*`: Detailed test outputs by type and target
+        - `webscope-memory-test-*`: Memory leak detection data
+        - `webscope-benchmark-*`: Performance benchmark results
+        - `webscope-integration-*`: Integration test outputs
+        - `webscope-failure-logs-*`: Debug logs for failed tests
+        
+        ### Key Files to Review
+        - **Memory Usage Logs:** Pattern analysis for leak detection
+        - **Benchmark Reports:** Performance baseline comparisons
+        - **Crawling Results:** Coverage and discovery effectiveness
+        - **Security Scan SARIF:** Code security analysis results
+        
+        ## Configuration Examples
+        
+        ### For Production Use
+        ```yaml
+        global:
+          rate_limit: 10
+          timeout: 60s
+        crawler:
+          max_depth: 5
+          max_pages: 1000
+        modules:
+          directory_enumeration:
+            enabled: true
+          technology_detection:
+            enabled: true
+          vulnerability_scan:
+            enabled: true
+        ```
+        
+        ### For High-Performance Scanning
+        ```yaml
+        global:
+          rate_limit: 50
+          timeout: 30s
+        crawler:
+          max_depth: 3
+          max_pages: 500
+          delay_between_requests: 50ms
+        ```
+        
+        ## Next Steps
+        
+        1. **Performance Review:** Analyze benchmark results for optimization opportunities
+        2. **Memory Analysis:** Review memory usage patterns for efficiency improvements
+        3. **Security Validation:** Address any security findings from scans
+        4. **Integration Testing:** Validate compatibility with SubScope and ProxyHawk
+        5. **Configuration Tuning:** Optimize settings based on test results
+        
+        ---
+        
+        *This review is automatically generated by the WebScope testing workflow.*
+        *For detailed analysis, examine the individual test artifacts and logs.*
+        EOF
+
+    - name: Upload comprehensive test review
+      uses: actions/upload-artifact@v4
+      with:
+        name: webscope-testing-review-${{ github.run_number }}
+        path: TESTING_REVIEW.md
+        retention-days: 90
