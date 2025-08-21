@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	appVersion = "2.0.0"
+	appVersion = "2.0.1"
 	appName    = "WebScope"
 )
 
@@ -108,6 +108,14 @@ func main() {
 
 	// Get target from flag or stdin
 	if target == "" {
+		// Check if stdin has data (is piped or redirected)
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) != 0 {
+			// No input from pipe/redirect and no target flag - show help
+			flag.Usage()
+			os.Exit(1)
+		}
+		
 		// Read from stdin
 		var input string
 		if _, err := fmt.Scanln(&input); err != nil {
