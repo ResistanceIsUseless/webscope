@@ -358,8 +358,9 @@ func parseRobotsTxt(content string) []string {
 	lines := strings.Split(content, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Disallow:") {
-			path := strings.TrimSpace(strings.TrimPrefix(line, "Disallow:"))
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "disallow:") {
+			path := strings.TrimSpace(line[len("disallow:"):])
 			if path != "" && path != "/" {
 				disallowed = append(disallowed, path)
 			}

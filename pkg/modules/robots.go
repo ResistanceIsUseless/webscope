@@ -2,6 +2,8 @@ package modules
 
 import (
 	"bufio"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -97,56 +99,65 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 	}
 	result.Paths = append(result.Paths, robotsPath)
 
-	// Since we can't get the body content from httpx directly,
-	// we'll probe common disallowed paths that are typically in robots.txt
 	baseURL := strings.TrimSuffix(target.URL, "/")
 
-	// Common paths found in robots.txt files
-	commonDisallowedPaths := []string{
-		"/admin", "/admin/",
-		"/api", "/api/",
-		"/backup", "/backup/",
-		"/config", "/config/",
-		"/private", "/private/",
-		"/test", "/test/",
-		"/tmp", "/tmp/",
-		"/dev", "/dev/",
-		"/staging", "/staging/",
-		"/.git", "/.git/",
-		"/.env",
-		"/wp-admin", "/wp-admin/",
-		"/wp-content", "/wp-content/",
-		"/wp-includes", "/wp-includes/",
-		"/cgi-bin", "/cgi-bin/",
-		"/scripts", "/scripts/",
-		"/includes", "/includes/",
-		"/lib", "/lib/",
-		"/src", "/src/",
-		"/vendor", "/vendor/",
-		"/node_modules", "/node_modules/",
-		"/cache", "/cache/",
-		"/logs", "/logs/",
-		"/database", "/database/",
-		"/db", "/db/",
-		"/sql", "/sql/",
-		"/phpmyadmin", "/phpmyadmin/",
-		"/phpMyAdmin", "/phpMyAdmin/",
-		"/setup", "/setup/",
-		"/install", "/install/",
-		"/console", "/console/",
-		"/status", "/status/",
-		"/server-status",
-		"/server-info",
-	}
-
-	// Build URLs to probe
+	// Download and parse the actual robots.txt content
 	var urlsToProbe []string
-	for _, path := range commonDisallowedPaths {
-		fullURL := baseURL + path
-		urlsToProbe = append(urlsToProbe, fullURL)
+	var robotsSitemaps []string
+
+	content, dlErr := r.downloadContent(robotsURL)
+	if dlErr == nil && content != "" {
+		parsedPaths, parsedSitemaps := r.parseRobots(content)
+		for _, p := range parsedPaths {
+			urlsToProbe = append(urlsToProbe, baseURL+p)
+		}
+		robotsSitemaps = parsedSitemaps
 	}
 
-	// Probe paths using httpx bulk
+	// Fall back to common paths only when robots.txt couldn't be parsed
+	if len(urlsToProbe) == 0 {
+		commonDisallowedPaths := []string{
+			"/admin", "/admin/",
+			"/api", "/api/",
+			"/backup", "/backup/",
+			"/config", "/config/",
+			"/private", "/private/",
+			"/test", "/test/",
+			"/tmp", "/tmp/",
+			"/dev", "/dev/",
+			"/staging", "/staging/",
+			"/.git", "/.git/",
+			"/.env",
+			"/wp-admin", "/wp-admin/",
+			"/wp-content", "/wp-content/",
+			"/wp-includes", "/wp-includes/",
+			"/cgi-bin", "/cgi-bin/",
+			"/scripts", "/scripts/",
+			"/includes", "/includes/",
+			"/lib", "/lib/",
+			"/src", "/src/",
+			"/vendor", "/vendor/",
+			"/node_modules", "/node_modules/",
+			"/cache", "/cache/",
+			"/logs", "/logs/",
+			"/database", "/database/",
+			"/db", "/db/",
+			"/sql", "/sql/",
+			"/phpmyadmin", "/phpmyadmin/",
+			"/phpMyAdmin", "/phpMyAdmin/",
+			"/setup", "/setup/",
+			"/install", "/install/",
+			"/console", "/console/",
+			"/status", "/status/",
+			"/server-status",
+			"/server-info",
+		}
+		for _, path := range commonDisallowedPaths {
+			urlsToProbe = append(urlsToProbe, baseURL+path)
+		}
+	}
+
+	// Probe discovered paths using httpx bulk
 	httpxResults2, err := r.httpx.ProbeBulk(urlsToProbe)
 	if err == nil {
 		for _, httpxRes := range httpxResults2 {
@@ -176,15 +187,18 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 		}
 	}
 
-	// Also check for common sitemap locations
-	sitemapURLs := []string{
-		baseURL + "/sitemap.xml",
-		baseURL + "/sitemap_index.xml",
-		baseURL + "/sitemap-index.xml",
-		baseURL + "/sitemap.xml.gz",
-		baseURL + "/sitemap1.xml",
-		baseURL + "/sitemap/sitemap.xml",
-		baseURL + "/sitemaps/sitemap.xml",
+	// Check sitemaps: prefer ones declared in robots.txt, fall back to common locations
+	sitemapURLs := robotsSitemaps
+	if len(sitemapURLs) == 0 {
+		sitemapURLs = []string{
+			baseURL + "/sitemap.xml",
+			baseURL + "/sitemap_index.xml",
+			baseURL + "/sitemap-index.xml",
+			baseURL + "/sitemap.xml.gz",
+			baseURL + "/sitemap1.xml",
+			baseURL + "/sitemap/sitemap.xml",
+			baseURL + "/sitemaps/sitemap.xml",
+		}
 	}
 
 	sitemapResults, err := r.httpx.ProbeBulk(sitemapURLs)
@@ -221,6 +235,32 @@ func (r *RobotsModule) Discover(target types.Target) (*types.DiscoveryResult, er
 	}
 
 	return result, nil
+}
+
+// downloadContent fetches raw body content from a URL, limited to 1MB.
+func (r *RobotsModule) downloadContent(url string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; WebScope/2.0)")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", nil
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024))
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }
 
 func (r *RobotsModule) parseRobots(content string) ([]string, []string) {

@@ -57,20 +57,13 @@ func (p *PatternAnalyzer) Analyze(result *discovery.Result) *AnalysisResult {
 		Subdomains:     []string{},
 	}
 
-	// Analyze each discovered path's content
+	// Analyze each discovered path's URL for patterns
 	for _, path := range result.Paths {
-		// Check if path itself is sensitive
 		if p.isSensitivePath(path.URL) {
 			analysis.SensitivePaths = append(analysis.SensitivePaths, path.URL)
 		}
-
-		// If we have content from the HTTP client (which we do in v2)
-		if path.Source == "basic" || path.Source == "standard" || path.Source == "deep" {
-			// Note: In full implementation, we'd get body content from the HTTP response
-			// For now, we're just analyzing the URL patterns
-			if p.isAPIEndpoint(path.URL) {
-				analysis.Endpoints = append(analysis.Endpoints, path.URL)
-			}
+		if p.isAPIEndpoint(path.URL) {
+			analysis.Endpoints = append(analysis.Endpoints, path.URL)
 		}
 	}
 

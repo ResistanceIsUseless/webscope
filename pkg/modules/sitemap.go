@@ -1,7 +1,8 @@
 package modules
 
 import (
-	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -146,16 +147,29 @@ func (s *SitemapModule) Discover(target types.Target) (*types.DiscoveryResult, e
 		}
 	}
 
-	// Since httpx doesn't parse XML content, we'll discover common patterns
-	// that might be in sitemaps and probe them
-	if len(foundSitemaps) > 0 {
-		// Generate common URL patterns found in sitemaps
-		commonPatterns := s.generateCommonSitemapURLs(baseURL)
+	// Download and parse each sitemap for actual URLs (up to 200 per sitemap)
+	seen := make(map[string]bool)
+	for _, sitemapURL := range foundSitemaps {
+		xmlURLs := s.downloadAndParseXML(sitemapURL)
 
-		// Probe these URLs
-		patternResults, err := s.httpx.ProbeBulk(commonPatterns)
+		var toProbe []string
+		for _, u := range xmlURLs {
+			if !seen[u] {
+				seen[u] = true
+				toProbe = append(toProbe, u)
+			}
+			if len(toProbe) >= 200 {
+				break
+			}
+		}
+
+		if len(toProbe) == 0 {
+			continue
+		}
+
+		probeResults, err := s.httpx.ProbeBulk(toProbe)
 		if err == nil {
-			for _, httpxResult := range patternResults {
+			for _, httpxResult := range probeResults {
 				if httpxResult.StatusCode > 0 && httpxResult.StatusCode < 400 {
 					path := types.Path{
 						URL:         httpxResult.URL,
@@ -164,11 +178,10 @@ func (s *SitemapModule) Discover(target types.Target) (*types.DiscoveryResult, e
 						Method:      "GET",
 						ContentType: httpxResult.ContentType,
 						Title:       httpxResult.Title,
-						Source:      "sitemap-pattern",
+						Source:      "sitemap-parsed",
 					}
 					result.Paths = append(result.Paths, path)
 
-					// Extract path for endpoint
 					pathOnly := strings.TrimPrefix(httpxResult.URL, baseURL)
 					endpoint := types.Endpoint{
 						Path:   pathOnly,
@@ -185,72 +198,52 @@ func (s *SitemapModule) Discover(target types.Target) (*types.DiscoveryResult, e
 	return result, nil
 }
 
-func (s *SitemapModule) generateCommonSitemapURLs(baseURL string) []string {
-	var urls []string
+// downloadAndParseXML fetches a sitemap URL and returns all <loc> URLs found in it.
+func (s *SitemapModule) downloadAndParseXML(sitemapURL string) []string {
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("GET", sitemapURL, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; WebScope/2.0)")
+	req.Header.Set("Accept", "application/xml, text/xml, */*")
 
-	// Common patterns found in sitemaps
-	patterns := []string{
-		"/about", "/about-us", "/about/",
-		"/contact", "/contact-us", "/contact/",
-		"/services", "/services/",
-		"/products", "/products/",
-		"/portfolio", "/portfolio/",
-		"/blog", "/blog/", "/news", "/news/",
-		"/careers", "/careers/", "/jobs", "/jobs/",
-		"/team", "/team/", "/our-team", "/our-team/",
-		"/privacy", "/privacy-policy", "/privacy/",
-		"/terms", "/terms-of-service", "/terms/",
-		"/faq", "/faq/", "/help", "/help/",
-		"/support", "/support/",
-		"/pricing", "/pricing/", "/plans", "/plans/",
-		"/features", "/features/",
-		"/documentation", "/documentation/", "/docs", "/docs/",
-		"/resources", "/resources/",
-		"/partners", "/partners/",
-		"/press", "/press/", "/media", "/media/",
-		"/events", "/events/",
-		"/case-studies", "/case-studies/",
-		"/testimonials", "/testimonials/",
-		"/gallery", "/gallery/", "/photos", "/photos/",
-		"/download", "/downloads", "/download/", "/downloads/",
-		"/white-papers", "/white-papers/",
-		"/ebooks", "/ebooks/",
-		"/webinars", "/webinars/",
-		"/newsletter", "/newsletter/",
-		"/subscribe", "/subscribe/",
-		"/unsubscribe", "/unsubscribe/",
-		"/account", "/account/", "/my-account", "/my-account/",
-		"/dashboard", "/dashboard/",
-		"/profile", "/profile/",
-		"/settings", "/settings/",
-		"/search", "/search/",
-		"/categories", "/categories/",
-		"/tags", "/tags/",
-		"/archive", "/archive/", "/archives", "/archives/",
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil
 	}
 
-	// Generate full URLs
-	for _, pattern := range patterns {
-		urls = append(urls, baseURL+pattern)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return nil
+	}
 
-		// Also try with common date patterns for blogs
-		if pattern == "/blog" || pattern == "/news" || pattern == "/archive" {
-			currentYear := time.Now().Year()
-			for year := currentYear; year >= currentYear-2; year-- {
-				urls = append(urls, fmt.Sprintf("%s%s/%d", baseURL, pattern, year))
-				urls = append(urls, fmt.Sprintf("%s%s/%d/", baseURL, pattern, year))
+	return parseSitemapXML(string(body))
+}
+
+// parseSitemapXML extracts all <loc> values from sitemap XML content.
+func parseSitemapXML(content string) []string {
+	var urls []string
+	seen := make(map[string]bool)
+
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		start := strings.Index(line, "<loc>")
+		end := strings.Index(line, "</loc>")
+		if start >= 0 && end > start+5 {
+			u := strings.TrimSpace(line[start+5 : end])
+			if u != "" && !seen[u] {
+				seen[u] = true
+				urls = append(urls, u)
 			}
 		}
 	}
 
-	// Add numbered pages
-	for i := 1; i <= 5; i++ {
-		urls = append(urls, fmt.Sprintf("%s/page/%d", baseURL, i))
-		urls = append(urls, fmt.Sprintf("%s/page/%d/", baseURL, i))
-		urls = append(urls, fmt.Sprintf("%s/?page=%d", baseURL, i))
-		urls = append(urls, fmt.Sprintf("%s/blog/page/%d", baseURL, i))
-		urls = append(urls, fmt.Sprintf("%s/blog/page/%d/", baseURL, i))
-	}
-
 	return urls
 }
+

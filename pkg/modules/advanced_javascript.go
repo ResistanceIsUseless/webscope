@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -155,7 +157,7 @@ func (a *AdvancedJavaScriptModule) probeGraphQLSchema(endpoint, baseURL string) 
 	// Try to validate the GraphQL endpoint with a simple introspection query
 	if a.validateGraphQLEndpoint(endpoint) {
 		// Valid GraphQL endpoint found
-		fmt.Printf("[GraphQL] Validated endpoint: %s\n", endpoint)
+		fmt.Fprintf(os.Stderr, "[GraphQL] Validated endpoint: %s\n", endpoint)
 		schema := &types.GraphQLSchema{
 			Endpoint:      endpoint,
 			Source:        "advanced-javascript",
@@ -363,41 +365,46 @@ func (a *AdvancedJavaScriptModule) findJavaScriptFiles(target types.Target) []st
 	return a.deduplicateStrings(jsFiles)
 }
 
-func (a *AdvancedJavaScriptModule) analyzeJavaScriptContent(jsURL string, result *types.DiscoveryResult) {
-	// Note: In a real implementation, we would need to download the JavaScript file content
-	// For now, we'll demonstrate how jsluice would be used with placeholder content
-
-	// This is where you would fetch the actual JavaScript content:
-	// content, err := a.downloadJavaScriptFile(jsURL)
-	// if err != nil {
-	//     return
-	// }
-
-	// For demonstration, we'll use jsluice with a placeholder
-	// In real implementation, replace this with actual file content
-	content := `
-		// Example JavaScript content that would be analyzed
-		const API_ENDPOINT = 'https://api.example.com/graphql';
-		const WS_URL = 'wss://example.com/socket';
-		const SECRET_KEY = 'sk_test_abcdef123456789';
-		
-		// GraphQL queries
-		const GET_USERS = gql` + "`" + `
-			query GetUsers {
-				users {
-					id
-					name
-					email
-				}
+// downloadContent fetches the raw body of a URL, limited to 5MB.
+func (a *AdvancedJavaScriptModule) downloadContent(jsURL string) (string, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return http.ErrUseLastResponse
 			}
-		` + "`" + `;
-		
-		// WebSocket connection
-		const socket = new WebSocket(WS_URL);
-		socket.on('connect', () => {
-			console.log('Connected to WebSocket');
-		});
-	`
+			return nil
+		},
+	}
+	req, err := http.NewRequest("GET", jsURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; WebScope/2.0)")
+	req.Header.Set("Accept", "application/javascript, text/javascript, */*")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+func (a *AdvancedJavaScriptModule) analyzeJavaScriptContent(jsURL string, result *types.DiscoveryResult) {
+	content, err := a.downloadContent(jsURL)
+	if err != nil || len(content) == 0 {
+		return
+	}
 
 	// Use jsluice to analyze the JavaScript content
 	analyzer := jsluice.NewAnalyzer([]byte(content))
