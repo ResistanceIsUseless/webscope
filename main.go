@@ -19,6 +19,7 @@ import (
 	"github.com/resistanceisuseless/webscope/pkg/crawl"
 	"github.com/resistanceisuseless/webscope/pkg/discovery"
 	"github.com/resistanceisuseless/webscope/pkg/http"
+	"github.com/resistanceisuseless/webscope/pkg/output"
 )
 
 const (
@@ -78,10 +79,13 @@ func main() {
 	var appConfig *config.Config
 	var err error
 	
+	// Create styled output early for config loading messages
+	styledOut := output.NewStyledOutput(verbose)
+
 	if configFile != "" {
 		appConfig, err = config.Load(configFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			styledOut.PrintError(fmt.Sprintf("loading config: %v", err))
 			os.Exit(1)
 		}
 	} else {
@@ -90,12 +94,10 @@ func main() {
 			if _, err := os.Stat(path); err == nil {
 				appConfig, err = config.Load(path)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error loading config from %s: %v\n", path, err)
+					styledOut.PrintError(fmt.Sprintf("loading config from %s: %v", path, err))
 					os.Exit(1)
 				}
-				if verbose {
-					fmt.Fprintf(os.Stderr, "Loaded config from: %s\n", path)
-				}
+				styledOut.PrintInfo(fmt.Sprintf("Loaded config from: %s", path))
 				break
 			}
 		}
@@ -144,6 +146,10 @@ func main() {
 	client := http.NewClient(clientConfig)
 	defer client.Shutdown()
 
+	// Print banner and flow start
+	styledOut.PrintBanner(appVersion)
+	styledOut.PrintFlowStart(flowType, target)
+
 	// Setup signal handling for fast shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -153,9 +159,7 @@ func main() {
 
 	go func() {
 		<-sigChan
-		if verbose {
-			fmt.Fprintf(os.Stderr, "\nReceived interrupt signal, shutting down immediately...\n")
-		}
+		styledOut.PrintWarning("Received interrupt signal, shutting down immediately...")
 		cancel()
 		// Force exit after 500ms if graceful shutdown doesn't work
 		go func() {
@@ -167,27 +171,25 @@ func main() {
 		}()
 	}()
 
-	// Execute the selected flow
-	if verbose {
-		fmt.Fprintf(os.Stderr, "Starting %s flow for %s\n", flowType, target)
-	}
-
 	start := time.Now()
 	var result *discovery.Result
 
 	switch discovery.FlowType(flowType) {
 	case discovery.QuickFlow:
 		// Quick flow: robots.txt + sitemap.xml + basic paths
+		styledOut.PrintSection("Quick Discovery")
 		flow := discovery.NewBasicFlow(client)
 		result, err = flow.Execute(ctx, target)
 
 	case discovery.InDepthFlow:
 		// In-depth flow: Default comprehensive scan
+		styledOut.PrintSection("In-Depth Discovery")
 		flow := discovery.NewStandardFlow(client)
 		result, err = flow.Execute(ctx, target)
 
 		// Add crawling for in-depth
 		if err == nil {
+			styledOut.PrintProgress("Starting moderate crawling...")
 			crawlerConfig := crawl.CrawlerConfig{
 				MaxDepth:    2,
 				MaxRequests: 50, // Moderate crawling
@@ -207,26 +209,28 @@ func main() {
 					})
 				}
 
-				if verbose {
-					fmt.Fprintf(os.Stderr, "Crawled %d pages in %v\n", crawlResult.RequestsCount, crawlResult.CrawlTime)
-				}
+				styledOut.PrintInfo(fmt.Sprintf("Crawled %d pages in %v", crawlResult.RequestsCount, crawlResult.CrawlTime))
 			}
 		}
 
 	case discovery.IntenseFlow:
 		// Intense flow: Maximum coverage with larger wordlists
+		styledOut.PrintSection("Intense Discovery")
 		var wordlistData []string
 		if wordlist != "" {
 			// Load custom wordlist
+			styledOut.PrintProgress(fmt.Sprintf("Loading custom wordlist: %s", wordlist))
 			wordlistData = loadWordlist(wordlist)
 		}
-		
+
 		// Start with deep flow (includes smart variations)
+		styledOut.PrintProgress("Running deep path discovery with smart variations...")
 		flow := discovery.NewDeepFlow(client, wordlistData)
 		result, err = flow.Execute(ctx, target)
 
 		// Add deep crawling for intense
 		if err == nil {
+			styledOut.PrintProgress(fmt.Sprintf("Starting deep crawling (depth: %d, max requests: %d)...", maxDepth, maxRequests))
 			crawlerConfig := crawl.CrawlerConfig{
 				MaxDepth:    maxDepth,
 				MaxRequests: maxRequests,
@@ -256,14 +260,13 @@ func main() {
 					})
 				}
 
-				if verbose {
-					fmt.Fprintf(os.Stderr, "Deep crawled %d pages in %v\n", crawlResult.RequestsCount, crawlResult.CrawlTime)
-				}
+				styledOut.PrintInfo(fmt.Sprintf("Deep crawled %d pages in %v", crawlResult.RequestsCount, crawlResult.CrawlTime))
 			}
 		}
 
 		// Pattern analysis for intense flow
 		if err == nil && result != nil {
+			styledOut.PrintProgress("Running pattern analysis...")
 			analyzer := analysis.NewPatternAnalyzer()
 			analysisResult := analyzer.Analyze(result)
 
@@ -295,41 +298,38 @@ func main() {
 				})
 			}
 
-			if verbose {
-				fmt.Fprintf(os.Stderr, "Pattern analysis found %d secrets, %d sensitive paths, %d endpoints\n", 
-					len(analysisResult.Secrets), len(analysisResult.SensitivePaths), len(analysisResult.Endpoints))
-			}
+			styledOut.PrintInfo(fmt.Sprintf("Pattern analysis found %d secrets, %d sensitive paths, %d endpoints",
+				len(analysisResult.Secrets), len(analysisResult.SensitivePaths), len(analysisResult.Endpoints)))
 		}
 
 	default:
-		fmt.Fprintf(os.Stderr, "Error: Unknown flow type '%s'. Use: quick, in-depth, or intense\n", flowType)
+		styledOut.PrintError(fmt.Sprintf("Unknown flow type '%s'. Use: quick, in-depth, or intense", flowType))
 		flag.Usage()
 		os.Exit(1)
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		styledOut.PrintError(err.Error())
 		os.Exit(1)
 	}
 
 	// Output results
-	outputResults(result, appConfig, verbose)
+	styledOut.PrintSection("Results")
+	outputResults(result, appConfig, verbose, styledOut)
 
-	if verbose {
-		stats := client.GetStats()
-		fmt.Fprintf(os.Stderr, "\nStatistics:\n")
-		fmt.Fprintf(os.Stderr, "  Total Requests: %d\n", stats.RequestsTotal)
-		fmt.Fprintf(os.Stderr, "  Successful: %d\n", stats.RequestsSuccess)
-		fmt.Fprintf(os.Stderr, "  Failed: %d\n", stats.RequestsFailed)
-		if stats.RequestsSuccess > 0 {
-			avgLatency := stats.TotalLatency / time.Duration(stats.RequestsSuccess)
-			fmt.Fprintf(os.Stderr, "  Avg Latency: %v\n", avgLatency)
-		}
-		fmt.Fprintf(os.Stderr, "  Total Time: %v\n", time.Since(start))
+	// Print statistics
+	stats := client.GetStats()
+	var avgLatency time.Duration
+	if stats.RequestsSuccess > 0 {
+		avgLatency = stats.TotalLatency / time.Duration(stats.RequestsSuccess)
 	}
+	styledOut.PrintStats(int(stats.RequestsTotal), int(stats.RequestsSuccess), int(stats.RequestsFailed), avgLatency, time.Since(start))
+
+	// Print completion
+	styledOut.PrintCompletion(result.DiscoveryTime)
 }
 
-func outputResults(result *discovery.Result, appConfig *config.Config, verbose bool) {
+func outputResults(result *discovery.Result, appConfig *config.Config, verbose bool, styledOut *output.StyledOutput) {
 	if result == nil {
 		return
 	}
@@ -337,40 +337,32 @@ func outputResults(result *discovery.Result, appConfig *config.Config, verbose b
 	// Get allowed status codes from config
 	allowedStatuses := getAllowedStatusCodes(appConfig)
 
-	// Output discovered paths with consistent format: URL [STATUS] [MODULE]
+	// Output discovered paths with styled format
 	if len(result.Paths) > 0 {
 		for _, path := range result.Paths {
 			// Check if status code is allowed by configuration
 			if allowedStatuses[path.Status] {
-				if verbose && path.Source != "" {
-					fmt.Printf("%s [%d] [%s]\n", path.URL, path.Status, path.Source)
-				} else {
-					fmt.Printf("%s [%d]\n", path.URL, path.Status)
-				}
+				styledOut.PrintPath(path.URL, path.Status, path.Source)
 			}
 		}
 	}
 
-	// Output secrets with consistent format if they have URLs
+	// Output secrets with styled format if they have URLs
 	if len(result.Secrets) > 0 && verbose {
 		for _, secret := range result.Secrets {
 			if strings.HasPrefix(secret.Value, "http") {
-				fmt.Printf("%s [SECRET] [%s]\n", secret.Value, secret.Source)
+				styledOut.PrintSecret(secret.Value, secret.Type, secret.Source)
 			}
 		}
 	}
 
-	// Output findings with consistent format if they have URLs  
+	// Output findings with styled format if they have URLs
 	if len(result.Findings) > 0 && verbose {
 		for _, finding := range result.Findings {
 			if finding.URL != "" && finding.Severity == "high" {
-				fmt.Printf("%s [FINDING] [%s]\n", finding.URL, finding.Type)
+				styledOut.PrintFinding(finding.URL, finding.Type)
 			}
 		}
-	}
-
-	if verbose {
-		fmt.Printf("\n[*] Discovery completed in %v\n", result.DiscoveryTime)
 	}
 }
 
@@ -379,7 +371,9 @@ func loadWordlist(path string) []string {
 
 	file, err := os.Open(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not load wordlist %s: %v\n", path, err)
+		// Note: We can't use styledOut here as it's not available in this scope
+		// But this is fine as the caller will show a progress message
+		fmt.Fprintf(os.Stderr, "⚠ Warning: Could not load wordlist %s: %v\n", path, err)
 		return wordlist
 	}
 	defer file.Close()
