@@ -15,9 +15,9 @@ import (
 type FlowType string
 
 const (
-	QuickFlow    FlowType = "quick"    // robots.txt + sitemap.xml + basic paths
-	InDepthFlow  FlowType = "in-depth" // + urlfinder + katana + jsluice
-	IntenseFlow  FlowType = "intense"  // + larger paths + deep katana + patterns
+	QuickFlow   FlowType = "quick"    // robots.txt + sitemap.xml + basic paths
+	InDepthFlow FlowType = "in-depth" // + urlfinder + katana + jsluice
+	IntenseFlow FlowType = "intense"  // + larger paths + deep katana + patterns
 )
 
 // Result represents discovery results
@@ -193,7 +193,7 @@ func (f *StandardDiscoveryFlow) Execute(ctx context.Context, target string) (*Re
 
 				// Validate disallowed paths (with limit)
 				for i, disallowedPath := range disallowed {
-					if i >= 20 { // Limit to prevent explosion
+					if i >= 50 { // Limit to prevent explosion
 						break
 					}
 					if ctx.Err() != nil {
@@ -224,7 +224,7 @@ func (f *StandardDiscoveryFlow) Execute(ctx context.Context, target string) (*Re
 
 				// Validate sitemap URLs (with limit)
 				for i, url := range urls {
-					if i >= 50 { // Limit
+					if i >= 100 { // Limit
 						break
 					}
 					if ctx.Err() != nil {
@@ -286,7 +286,7 @@ func (f *DeepDiscoveryFlow) Execute(ctx context.Context, target string) (*Result
 
 	// Bruteforce paths (with aggressive limits)
 	for i, word := range f.wordlist {
-		if i >= 100 { // Hard limit
+		if i >= 250 { // Hard limit
 			break
 		}
 
@@ -319,7 +319,7 @@ func (f *DeepDiscoveryFlow) Execute(ctx context.Context, target string) (*Result
 	// Smart permutations on discovered paths
 	if len(discoveredPaths) > 0 {
 		variations := generateSmartVariations(discoveredPaths, baseURL)
-		
+
 		for i, variation := range variations {
 			if i >= 50 { // Limit variations
 				break
@@ -388,12 +388,16 @@ func parseSitemap(content string) []string {
 
 func getDefaultWordlist() []string {
 	return []string{
-		"admin", "api", "app", "assets", "backup", "config", "css", "dashboard",
-		"data", "db", "debug", "docs", "download", "files", "home", "images",
-		"img", "js", "json", "login", "logs", "manage", "media", "old", "panel",
-		"private", "public", "scripts", "static", "test", "tmp", "upload",
-		"uploads", "user", "users", "v1", "v2", "web", "www", "xml",
+		"admin", "api", "app", "assets", "backup", "bin", "config", "css", "dashboard",
+		"data", "db", "debug", "dev", "docs", "download", "files", "home", "images",
+		"img", "include", "js", "json", "lib", "login", "logs", "manage", "media",
+		"old", "panel", "php", "private", "public", "scripts", "server", "src",
+		"static", "storage", "test", "tmp", "tools", "upload", "uploads", "user",
+		"users", "v1", "v2", "v3", "web", "www", "xml",
 		".env", ".git", ".svn", ".htaccess", ".htpasswd", "web.config",
+		"admin.php", "login.php", "dashboard.php", "config.php", "wp-admin",
+		"wp-login.php", "administrator", "phpmyadmin", ".git/config",
+		"server-status", "actuator", "health", "swagger", "api-docs",
 	}
 }
 
@@ -401,7 +405,7 @@ func getDefaultWordlist() []string {
 func generateSmartVariations(discoveredPaths []Path, baseURL string) []string {
 	var variations []string
 	pathsMap := make(map[string]bool)
-	
+
 	// Extract unique paths
 	for _, discoveredPath := range discoveredPaths {
 		path := extractPathFromURL(discoveredPath.URL, baseURL)
@@ -409,16 +413,16 @@ func generateSmartVariations(discoveredPaths []Path, baseURL string) []string {
 			pathsMap[path] = true
 		}
 	}
-	
+
 	// Generate smart variations for each discovered path
 	for path := range pathsMap {
 		basePath := strings.TrimSuffix(path, "/")
 		baseURL := strings.TrimSuffix(baseURL, "/")
-		
+
 		// Extension variations
 		extensionVariations := []string{
 			baseURL + basePath + ".json",
-			baseURL + basePath + ".xml", 
+			baseURL + basePath + ".xml",
 			baseURL + basePath + ".txt",
 			baseURL + basePath + ".html",
 			baseURL + basePath + ".php",
@@ -427,11 +431,11 @@ func generateSmartVariations(discoveredPaths []Path, baseURL string) []string {
 			baseURL + basePath + ".aspx",
 		}
 		variations = append(variations, extensionVariations...)
-		
+
 		// Backup variations
 		backupVariations := []string{
 			baseURL + basePath + ".bak",
-			baseURL + basePath + ".backup", 
+			baseURL + basePath + ".backup",
 			baseURL + basePath + ".old",
 			baseURL + basePath + ".orig",
 			baseURL + basePath + "~",
@@ -439,13 +443,13 @@ func generateSmartVariations(discoveredPaths []Path, baseURL string) []string {
 			baseURL + basePath + ".tmp",
 		}
 		variations = append(variations, backupVariations...)
-		
+
 		// Directory variations
 		if !strings.HasSuffix(basePath, "/") {
 			dirVariations := []string{
 				baseURL + basePath + "/",
 				baseURL + basePath + "/index.html",
-				baseURL + basePath + "/index.php", 
+				baseURL + basePath + "/index.php",
 				baseURL + basePath + "/default.html",
 				baseURL + basePath + "/api",
 				baseURL + basePath + "/admin",
@@ -454,23 +458,23 @@ func generateSmartVariations(discoveredPaths []Path, baseURL string) []string {
 			}
 			variations = append(variations, dirVariations...)
 		}
-		
-		// Version variations  
+
+		// Version variations
 		versionVariations := []string{
 			baseURL + basePath + "v1",
 			baseURL + basePath + "v2",
-			baseURL + basePath + "/v1", 
+			baseURL + basePath + "/v1",
 			baseURL + basePath + "/v2",
 			baseURL + basePath + "_v1",
 			baseURL + basePath + "_v2",
 		}
 		variations = append(variations, versionVariations...)
-		
+
 		// Environment variations
 		envVariations := []string{
 			baseURL + basePath + "_test",
 			baseURL + basePath + "_dev",
-			baseURL + basePath + "_staging", 
+			baseURL + basePath + "_staging",
 			baseURL + basePath + "_prod",
 			baseURL + basePath + "-test",
 			baseURL + basePath + "-dev",
@@ -479,7 +483,7 @@ func generateSmartVariations(discoveredPaths []Path, baseURL string) []string {
 		}
 		variations = append(variations, envVariations...)
 	}
-	
+
 	return deduplicateStrings(variations)
 }
 
@@ -499,13 +503,13 @@ func extractPathFromURL(fullURL, baseURL string) string {
 func deduplicateStrings(input []string) []string {
 	seen := make(map[string]bool)
 	var result []string
-	
+
 	for _, item := range input {
 		if !seen[item] && item != "" {
 			seen[item] = true
 			result = append(result, item)
 		}
 	}
-	
+
 	return result
 }

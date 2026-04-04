@@ -119,18 +119,58 @@ func (s *StyledOutput) PrintPath(url string, status int, source string) {
 		statusColor = s.error
 	}
 
-	// Print URL
-	fmt.Fprintf(s.writer, "%s ", url)
+	// Print URL with color
+	s.highlight.Fprintf(s.writer, "%-60s ", truncateURL(url, 58))
 
 	// Print status code with color
 	statusColor.Fprintf(s.writer, "[%d]", status)
 
 	// Print source if verbose
 	if s.verbose && source != "" {
-		s.muted.Fprintf(s.writer, " [%s]", source)
+		s.muted.Fprintf(s.writer, "  [%s]", source)
 	}
 
 	fmt.Fprintf(s.writer, "\n")
+}
+
+// PrintEndpoint prints a discovered API endpoint
+func (s *StyledOutput) PrintEndpoint(path, endpointType, method string) {
+	if !s.verbose {
+		return
+	}
+
+	// Method color
+	var methodColor *color.Color
+	switch method {
+	case "GET":
+		methodColor = s.success
+	case "POST":
+		methodColor = s.warning
+	case "PUT", "PATCH":
+		methodColor = s.info
+	case "DELETE":
+		methodColor = s.error
+	default:
+		methodColor = s.muted
+	}
+
+	s.muted.Fprintf(s.writer, "  └─ ")
+	fmt.Fprintf(s.writer, "%-40s ", truncateURL(path, 38))
+	methodColor.Fprintf(s.writer, "[%s]", method)
+	s.muted.Fprintf(s.writer, "  %s\n", endpointType)
+}
+
+// PrintIntegrationStatus prints integration status
+func (s *StyledOutput) PrintIntegrationStatus(name string, count int, success bool) {
+	if !s.verbose {
+		return
+	}
+
+	if success {
+		s.success.Fprintf(s.writer, "  → %s: %d items sent\n", name, count)
+	} else {
+		s.warning.Fprintf(s.writer, "  → %s: %d items ready\n", name, count)
+	}
 }
 
 // PrintSecret prints a discovered secret
@@ -261,4 +301,12 @@ func (s *StyledOutput) PrintSection(title string) {
 	s.bold.Fprintf(os.Stderr, "─── %s ", title)
 	s.muted.Fprintf(os.Stderr, strings.Repeat("─", 40-len(title)))
 	fmt.Fprintf(os.Stderr, "\n\n")
+}
+
+// truncateURL truncates a URL to fit within maxLen
+func truncateURL(url string, maxLen int) string {
+	if len(url) <= maxLen {
+		return url
+	}
+	return "..." + url[len(url)-maxLen+3:]
 }

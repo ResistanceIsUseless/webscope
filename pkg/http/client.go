@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ type ClientConfig struct {
 	MaxResponseSize   int64
 	DisableKeepAlives bool
 	UserAgent         string
+	ProxyURL          string // HTTP/SOCKS5 proxy URL
 }
 
 // ClientStats tracks client usage statistics
@@ -56,9 +58,9 @@ func DefaultConfig() ClientConfig {
 	return ClientConfig{
 		Timeout:           2 * time.Second, // AGGRESSIVE timeout
 		RateLimit:         10,
-		MaxRetries:        1, // Minimal retries
+		MaxRetries:        1,                // Minimal retries
 		MaxResponseSize:   10 * 1024 * 1024, // 10MB max
-		DisableKeepAlives: true, // Prevent connection pool issues
+		DisableKeepAlives: true,             // Prevent connection pool issues
 		UserAgent:         "WebScope/2.0",
 	}
 }
@@ -70,7 +72,14 @@ func NewClient(config ClientConfig) *Client {
 		MaxIdleConnsPerHost: 2,
 		IdleConnTimeout:     10 * time.Second,
 		DisableKeepAlives:   config.DisableKeepAlives, // Prevent connection pooling issues
-		ForceAttemptHTTP2:   false, // Simpler, more predictable
+		ForceAttemptHTTP2:   false,                    // Simpler, more predictable
+	}
+
+	// Set proxy if provided
+	if config.ProxyURL != "" {
+		transport.Proxy = func(req *http.Request) (*url.URL, error) {
+			return url.Parse(config.ProxyURL)
+		}
 	}
 
 	return &Client{
