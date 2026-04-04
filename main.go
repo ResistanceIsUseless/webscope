@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	appVersion = "2.0.1"
+	appVersion = "2.0.2"
 	appName    = "WebScope"
 )
 
