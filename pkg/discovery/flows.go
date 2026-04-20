@@ -22,12 +22,64 @@ const (
 
 // Result represents discovery results
 type Result struct {
-	Target        string
-	Paths         []Path
-	Endpoints     []Endpoint
-	Secrets       []Secret
-	Findings      []Finding
-	DiscoveryTime time.Duration
+	Target         string
+	Paths          []Path
+	Endpoints      []Endpoint
+	Secrets        []Secret
+	Findings       []Finding
+	Technologies   []Technology
+	Forms          []Form
+	Parameters     []Parameter
+	GraphQLSchemas []GraphQLSchema
+	WebSockets     []WebSocketEndpoint
+	DiscoveryTime  time.Duration
+}
+
+// Technology represents a detected technology
+type Technology struct {
+	Name     string
+	Category string
+	Version  string
+	Source   string
+}
+
+// Form represents a discovered HTML form
+type Form struct {
+	Action string
+	Method string
+	Inputs []FormInput
+	Source string
+}
+
+// FormInput represents an input field in a form
+type FormInput struct {
+	Name  string
+	Type  string
+	Value string
+}
+
+// Parameter represents a discovered parameter
+type Parameter struct {
+	Name   string
+	Type   string
+	Source string
+}
+
+// GraphQLSchema represents a discovered GraphQL endpoint
+type GraphQLSchema struct {
+	Endpoint      string
+	Queries       []string
+	Mutations     []string
+	Subscriptions []string
+	Source        string
+}
+
+// WebSocketEndpoint represents a discovered WebSocket endpoint
+type WebSocketEndpoint struct {
+	URL         string
+	Protocol    string
+	Subprotocol string
+	Source      string
 }
 
 // Path represents a discovered path

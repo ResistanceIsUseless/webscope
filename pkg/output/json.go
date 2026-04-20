@@ -26,16 +26,21 @@ func NewJSONOutput(writer io.Writer, pretty bool, includeAll bool) *JSONOutput {
 
 // JSONResult represents the complete scan result in JSON format
 type JSONResult struct {
-	Target        string         `json:"target"`
-	Flow          string         `json:"flow"`
-	StartTime     time.Time      `json:"start_time"`
-	EndTime       time.Time      `json:"end_time"`
-	DiscoveryTime string         `json:"discovery_time"`
-	Stats         JSONStats      `json:"stats"`
-	Paths         []JSONPath     `json:"paths,omitempty"`
-	Endpoints     []JSONEndpoint `json:"endpoints,omitempty"`
-	Secrets       []JSONSecret   `json:"secrets,omitempty"`
-	Findings      []JSONFinding  `json:"findings,omitempty"`
+	Target         string           `json:"target"`
+	Flow           string           `json:"flow"`
+	StartTime      time.Time        `json:"start_time"`
+	EndTime        time.Time        `json:"end_time"`
+	DiscoveryTime  string           `json:"discovery_time"`
+	Stats          JSONStats        `json:"stats"`
+	Paths          []JSONPath       `json:"paths,omitempty"`
+	Endpoints      []JSONEndpoint   `json:"endpoints,omitempty"`
+	Secrets        []JSONSecret     `json:"secrets,omitempty"`
+	Findings       []JSONFinding    `json:"findings,omitempty"`
+	Technologies   []JSONTechnology `json:"technologies,omitempty"`
+	Forms          []JSONForm       `json:"forms,omitempty"`
+	Parameters     []JSONParameter  `json:"parameters,omitempty"`
+	GraphQLSchemas []JSONGraphQL    `json:"graphql_schemas,omitempty"`
+	WebSockets     []JSONWebSocket  `json:"websockets,omitempty"`
 }
 
 // JSONStats represents statistics in JSON format
@@ -74,10 +79,63 @@ type JSONSecret struct {
 
 // JSONFinding represents a security finding in JSON format
 type JSONFinding struct {
-	URL      string `json:"url"`
-	Type     string `json:"type"`
-	Severity string `json:"severity"`
-	Details  string `json:"details,omitempty"`
+	URL        string                 `json:"url"`
+	Type       string                 `json:"type"`
+	Severity   string                 `json:"severity"`
+	Details    string                 `json:"details,omitempty"`
+	Category   string                 `json:"category,omitempty"`
+	Title      string                 `json:"title,omitempty"`
+	Evidence   string                 `json:"evidence,omitempty"`
+	Confidence string                 `json:"confidence,omitempty"`
+	References []string               `json:"references,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// JSONTechnology represents a detected technology in JSON format
+type JSONTechnology struct {
+	Name     string `json:"name"`
+	Category string `json:"category,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Source   string `json:"source"`
+}
+
+// JSONForm represents a discovered form in JSON format
+type JSONForm struct {
+	Action string          `json:"action"`
+	Method string          `json:"method"`
+	Inputs []JSONFormInput `json:"inputs,omitempty"`
+	Source string          `json:"source"`
+}
+
+// JSONFormInput represents a form input field
+type JSONFormInput struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value,omitempty"`
+}
+
+// JSONParameter represents a discovered parameter in JSON format
+type JSONParameter struct {
+	Name   string `json:"name"`
+	Type   string `json:"type,omitempty"`
+	Source string `json:"source"`
+}
+
+// JSONGraphQL represents a discovered GraphQL endpoint in JSON format
+type JSONGraphQL struct {
+	Endpoint      string   `json:"endpoint"`
+	Queries       []string `json:"queries,omitempty"`
+	Mutations     []string `json:"mutations,omitempty"`
+	Subscriptions []string `json:"subscriptions,omitempty"`
+	Source        string   `json:"source"`
+}
+
+// JSONWebSocket represents a discovered WebSocket endpoint in JSON format
+type JSONWebSocket struct {
+	URL         string `json:"url"`
+	Protocol    string `json:"protocol,omitempty"`
+	Subprotocol string `json:"subprotocol,omitempty"`
+	Source      string `json:"source"`
 }
 
 // ResultData holds all the data needed for JSON output
@@ -93,10 +151,15 @@ type ResultData struct {
 		RequestsFailed  int
 		AvgLatencyMs    int64
 	}
-	Paths     []PathData
-	Endpoints []EndpointData
-	Secrets   []SecretData
-	Findings  []FindingData
+	Paths          []PathData
+	Endpoints      []EndpointData
+	Secrets        []SecretData
+	Findings       []FindingData
+	Technologies   []TechnologyData
+	Forms          []FormData
+	Parameters     []ParameterData
+	GraphQLSchemas []GraphQLData
+	WebSockets     []WebSocketData
 }
 
 // PathData represents path data for JSON output
@@ -127,10 +190,63 @@ type SecretData struct {
 
 // FindingData represents finding data for JSON output
 type FindingData struct {
-	URL      string
-	Type     string
-	Severity string
-	Details  string
+	URL        string
+	Type       string
+	Severity   string
+	Details    string
+	Category   string
+	Title      string
+	Evidence   string
+	Confidence string
+	References []string
+	Metadata   map[string]interface{}
+}
+
+// TechnologyData represents technology data for JSON output
+type TechnologyData struct {
+	Name     string
+	Category string
+	Version  string
+	Source   string
+}
+
+// FormData represents form data for JSON output
+type FormData struct {
+	Action string
+	Method string
+	Inputs []FormInputData
+	Source string
+}
+
+// FormInputData represents form input data
+type FormInputData struct {
+	Name  string
+	Type  string
+	Value string
+}
+
+// ParameterData represents parameter data for JSON output
+type ParameterData struct {
+	Name   string
+	Type   string
+	Source string
+}
+
+// GraphQLData represents GraphQL data for JSON output
+type GraphQLData struct {
+	Endpoint      string
+	Queries       []string
+	Mutations     []string
+	Subscriptions []string
+	Source        string
+}
+
+// WebSocketData represents WebSocket data for JSON output
+type WebSocketData struct {
+	URL         string
+	Protocol    string
+	Subprotocol string
+	Source      string
 }
 
 // OutputResult writes the complete result as JSON
@@ -189,10 +305,83 @@ func (j *JSONOutput) OutputResult(data ResultData) error {
 	if len(data.Findings) > 0 || j.includeAll {
 		for _, f := range data.Findings {
 			result.Findings = append(result.Findings, JSONFinding{
-				URL:      f.URL,
-				Type:     f.Type,
-				Severity: f.Severity,
-				Details:  f.Details,
+				URL:        f.URL,
+				Type:       f.Type,
+				Severity:   f.Severity,
+				Details:    f.Details,
+				Category:   f.Category,
+				Title:      f.Title,
+				Evidence:   f.Evidence,
+				Confidence: f.Confidence,
+				References: f.References,
+				Metadata:   f.Metadata,
+			})
+		}
+	}
+
+	// Include technologies
+	if len(data.Technologies) > 0 || j.includeAll {
+		for _, t := range data.Technologies {
+			result.Technologies = append(result.Technologies, JSONTechnology{
+				Name:     t.Name,
+				Category: t.Category,
+				Version:  t.Version,
+				Source:   t.Source,
+			})
+		}
+	}
+
+	// Include forms
+	if len(data.Forms) > 0 || j.includeAll {
+		for _, f := range data.Forms {
+			jf := JSONForm{
+				Action: f.Action,
+				Method: f.Method,
+				Source: f.Source,
+			}
+			for _, inp := range f.Inputs {
+				jf.Inputs = append(jf.Inputs, JSONFormInput{
+					Name:  inp.Name,
+					Type:  inp.Type,
+					Value: inp.Value,
+				})
+			}
+			result.Forms = append(result.Forms, jf)
+		}
+	}
+
+	// Include parameters
+	if len(data.Parameters) > 0 || j.includeAll {
+		for _, p := range data.Parameters {
+			result.Parameters = append(result.Parameters, JSONParameter{
+				Name:   p.Name,
+				Type:   p.Type,
+				Source: p.Source,
+			})
+		}
+	}
+
+	// Include GraphQL schemas
+	if len(data.GraphQLSchemas) > 0 || j.includeAll {
+		for _, g := range data.GraphQLSchemas {
+			result.GraphQLSchemas = append(result.GraphQLSchemas, JSONGraphQL{
+				Endpoint:      g.Endpoint,
+				Queries:       g.Queries,
+				Mutations:     g.Mutations,
+				Subscriptions: g.Subscriptions,
+				Source:        g.Source,
+			})
+		}
+	}
+
+	// Include WebSocket endpoints
+	if len(data.WebSockets) > 0 || j.includeAll {
+		for _, ws := range data.WebSockets {
+			result.WebSockets = append(result.WebSockets, JSONWebSocket{
+				URL:         ws.URL,
+				Protocol:    ws.Protocol,
+				Subprotocol: ws.Subprotocol,
+				Source:      ws.Source,
 			})
 		}
 	}

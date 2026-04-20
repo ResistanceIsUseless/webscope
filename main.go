@@ -21,6 +21,7 @@ import (
 	"github.com/resistanceisuseless/webscope/pkg/http"
 	"github.com/resistanceisuseless/webscope/pkg/modules"
 	"github.com/resistanceisuseless/webscope/pkg/output"
+	"github.com/resistanceisuseless/webscope/pkg/types"
 )
 
 const (
@@ -240,6 +241,28 @@ func main() {
 					})
 				}
 
+				// Add discovered forms
+				for _, form := range crawlResult.Forms {
+					df := discovery.Form{
+						Action: form.Action,
+						Method: form.Method,
+						Source: "katana",
+					}
+					for _, inp := range form.Inputs {
+						df.Inputs = append(df.Inputs, discovery.FormInput{
+							Name:  inp.Name,
+							Type:  inp.Type,
+							Value: inp.Value,
+						})
+						result.Parameters = append(result.Parameters, discovery.Parameter{
+							Name:   inp.Name,
+							Type:   inp.Type,
+							Source: "katana",
+						})
+					}
+					result.Forms = append(result.Forms, df)
+				}
+
 				if !quiet {
 					styledOut.PrintInfo(fmt.Sprintf("Crawled %d pages in %v", crawlResult.RequestsCount, crawlResult.CrawlTime))
 				}
@@ -293,12 +316,24 @@ func main() {
 
 				// Add discovered forms
 				for _, form := range crawlResult.Forms {
-					result.Findings = append(result.Findings, discovery.Finding{
-						URL:      form.URL,
-						Type:     "form",
-						Severity: "medium",
-						Details:  fmt.Sprintf("Form found: %s %s", form.Method, form.Action),
-					})
+					df := discovery.Form{
+						Action: form.Action,
+						Method: form.Method,
+						Source: "deep-katana",
+					}
+					for _, inp := range form.Inputs {
+						df.Inputs = append(df.Inputs, discovery.FormInput{
+							Name:  inp.Name,
+							Type:  inp.Type,
+							Value: inp.Value,
+						})
+						result.Parameters = append(result.Parameters, discovery.Parameter{
+							Name:   inp.Name,
+							Type:   inp.Type,
+							Source: "deep-katana",
+						})
+					}
+					result.Forms = append(result.Forms, df)
 				}
 
 				if !quiet {
@@ -372,6 +407,87 @@ func main() {
 
 			if !quiet {
 				styledOut.PrintInfo(fmt.Sprintf("JSRecon analyzed %d JS files, found %d secrets", analyzedCount, secretsFound))
+			}
+		}
+
+		// Advanced JavaScript analysis (jsluice) for intense flow
+		if err == nil && result != nil {
+			if !quiet {
+				styledOut.PrintProgress("Running advanced JavaScript analysis (jsluice)...")
+			}
+
+			advJS := modules.NewAdvancedJavaScriptModule(30*time.Second, &appConfig.Global.JSluice)
+			jsTarget := types.Target{
+				URL:    target,
+				Domain: strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://"),
+			}
+			// Strip path from domain
+			if idx := strings.Index(jsTarget.Domain, "/"); idx > 0 {
+				jsTarget.Domain = jsTarget.Domain[:idx]
+			}
+
+			advResult, advErr := advJS.Discover(jsTarget)
+			if advErr == nil && advResult != nil {
+				// Merge GraphQL schemas
+				for _, schema := range advResult.GraphQLSchemas {
+					result.GraphQLSchemas = append(result.GraphQLSchemas, discovery.GraphQLSchema{
+						Endpoint: schema.Endpoint,
+						Source:   schema.Source,
+					})
+					for _, q := range schema.Queries {
+						result.GraphQLSchemas[len(result.GraphQLSchemas)-1].Queries = append(
+							result.GraphQLSchemas[len(result.GraphQLSchemas)-1].Queries, q.Name)
+					}
+					for _, m := range schema.Mutations {
+						result.GraphQLSchemas[len(result.GraphQLSchemas)-1].Mutations = append(
+							result.GraphQLSchemas[len(result.GraphQLSchemas)-1].Mutations, m.Name)
+					}
+				}
+
+				// Merge WebSocket endpoints
+				for _, ws := range advResult.WebSockets {
+					result.WebSockets = append(result.WebSockets, discovery.WebSocketEndpoint{
+						URL:         ws.URL,
+						Protocol:    ws.Protocol,
+						Subprotocol: ws.Subprotocol,
+						Source:      ws.Source,
+					})
+				}
+
+				// Merge secrets
+				for _, s := range advResult.Secrets {
+					result.Secrets = append(result.Secrets, discovery.Secret{
+						Type:    s.Type,
+						Value:   s.Value,
+						Context: s.Context,
+						Source:  s.Source,
+					})
+				}
+
+				// Merge endpoints
+				for _, e := range advResult.Endpoints {
+					result.Endpoints = append(result.Endpoints, discovery.Endpoint{
+						Path:   e.Path,
+						Type:   e.Type,
+						Method: e.Method,
+						Source: e.Source,
+					})
+				}
+
+				// Merge paths (JS files found)
+				for _, p := range advResult.Paths {
+					result.Paths = append(result.Paths, discovery.Path{
+						URL:         p.URL,
+						Status:      p.Status,
+						ContentType: p.ContentType,
+						Source:      p.Source,
+					})
+				}
+
+				if !quiet {
+					styledOut.PrintInfo(fmt.Sprintf("Advanced JS: %d GraphQL endpoints, %d WebSocket endpoints, %d secrets, %d endpoints",
+						len(advResult.GraphQLSchemas), len(advResult.WebSockets), len(advResult.Secrets), len(advResult.Endpoints)))
+				}
 			}
 		}
 
@@ -487,6 +603,58 @@ func main() {
 				Type:     f.Type,
 				Severity: f.Severity,
 				Details:  f.Details,
+			})
+		}
+
+		for _, t := range result.Technologies {
+			resultData.Technologies = append(resultData.Technologies, output.TechnologyData{
+				Name:     t.Name,
+				Category: t.Category,
+				Version:  t.Version,
+				Source:   t.Source,
+			})
+		}
+
+		for _, f := range result.Forms {
+			fd := output.FormData{
+				Action: f.Action,
+				Method: f.Method,
+				Source: f.Source,
+			}
+			for _, inp := range f.Inputs {
+				fd.Inputs = append(fd.Inputs, output.FormInputData{
+					Name:  inp.Name,
+					Type:  inp.Type,
+					Value: inp.Value,
+				})
+			}
+			resultData.Forms = append(resultData.Forms, fd)
+		}
+
+		for _, p := range result.Parameters {
+			resultData.Parameters = append(resultData.Parameters, output.ParameterData{
+				Name:   p.Name,
+				Type:   p.Type,
+				Source: p.Source,
+			})
+		}
+
+		for _, g := range result.GraphQLSchemas {
+			resultData.GraphQLSchemas = append(resultData.GraphQLSchemas, output.GraphQLData{
+				Endpoint:      g.Endpoint,
+				Queries:       g.Queries,
+				Mutations:     g.Mutations,
+				Subscriptions: g.Subscriptions,
+				Source:        g.Source,
+			})
+		}
+
+		for _, ws := range result.WebSockets {
+			resultData.WebSockets = append(resultData.WebSockets, output.WebSocketData{
+				URL:         ws.URL,
+				Protocol:    ws.Protocol,
+				Subprotocol: ws.Subprotocol,
+				Source:      ws.Source,
 			})
 		}
 
