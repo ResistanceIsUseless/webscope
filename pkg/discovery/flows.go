@@ -5,6 +5,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -175,7 +176,7 @@ func (f *BasicDiscoveryFlow) Execute(ctx context.Context, target string) (*Resul
 		"/favicon.ico",
 	}
 
-	baseURL := strings.TrimSuffix(target, "/")
+	baseURL := originURL(target)
 	for _, path := range commonPaths {
 		if ctx.Err() != nil {
 			break
@@ -232,7 +233,7 @@ func (f *StandardDiscoveryFlow) Execute(ctx context.Context, target string) (*Re
 		return result, err
 	}
 
-	baseURL := strings.TrimSuffix(target, "/")
+	baseURL := originURL(target)
 
 	// Check if we found robots.txt
 	for _, path := range result.Paths {
@@ -338,7 +339,7 @@ func (f *DeepDiscoveryFlow) Execute(ctx context.Context, target string) (*Result
 		return result, err
 	}
 
-	baseURL := strings.TrimSuffix(target, "/")
+	baseURL := originURL(target)
 	discoveredPaths := []Path{}
 
 	// Bruteforce paths (with aggressive limits)
@@ -409,6 +410,17 @@ func (f *DeepDiscoveryFlow) Execute(ctx context.Context, target string) (*Result
 }
 
 // Helper functions
+
+// originURL extracts the scheme+host(+port) from a URL, stripping any path.
+// e.g. "https://example.com:443/robots.txt" → "https://example.com:443"
+func originURL(target string) string {
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" {
+		// Fallback: trim anything after the third slash
+		return strings.TrimSuffix(target, "/")
+	}
+	return u.Scheme + "://" + u.Host
+}
 
 func parseRobotsTxt(content string) []string {
 	var disallowed []string
