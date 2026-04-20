@@ -245,6 +245,11 @@ func (f *StandardDiscoveryFlow) Execute(ctx context.Context, target string) (*Re
 		}
 	}
 
+	// Banner change detection — check if Server header varies across paths.
+	if bannerFindings := checkBannerChange(ctx, f.client, target); len(bannerFindings) > 0 {
+		result.Findings = append(result.Findings, bannerFindings...)
+	}
+
 	result.DiscoveryTime = time.Since(start)
 	return result, nil
 }

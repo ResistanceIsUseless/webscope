@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -214,32 +215,19 @@ func extractLinks(html string, baseURL string) []string {
 	}
 
 	for _, pattern := range patterns {
-		start := 0
-		for {
-			idx := strings.Index(html[start:], pattern[:5])
-			if idx == -1 {
-				break
+		re := regexp.MustCompile(pattern)
+		matches := re.FindAllStringSubmatch(html, -1)
+		for _, match := range matches {
+			if len(match) < 2 || match[1] == "" {
+				continue
 			}
-			idx += start
-
-			// Find the URL
-			quoteStart := idx + 6
-			quoteEnd := strings.IndexByte(html[quoteStart:], html[idx+5])
-			if quoteEnd == -1 {
-				break
-			}
-
-			rawLink := html[quoteStart : quoteStart+quoteEnd]
-
-			// Resolve relative URLs
+			rawLink := match[1]
 			if link, err := resolveURL(base, rawLink); err == nil {
 				if !seen[link] {
 					links = append(links, link)
 					seen[link] = true
 				}
 			}
-
-			start = quoteStart + quoteEnd
 		}
 	}
 
